@@ -19,6 +19,13 @@ from backend.models import (
     StepStatus,
 )
 from backend.process_scanner import get_process_cpu_mem, get_process_tree, is_process_alive
+from backend.security import (
+    atomic_write,
+    is_valid_task_id,
+    is_safe_log_path,
+    is_safe_project_dir,
+    sanitize_note,
+)
 from backend.state_machine import infer_status, check_error_hint
 
 
@@ -31,11 +38,14 @@ def _log_path(task_id: str) -> Path:
 
 
 def save_task(task: Task) -> None:
+    """Save task atomically — temp file + rename prevents corruption."""
     p = _task_path(task.task_id)
-    p.write_text(task.model_dump_json(indent=2))
+    atomic_write(p, task.model_dump_json(indent=2))
 
 
 def load_task(task_id: str) -> Optional[Task]:
+    if not is_valid_task_id(task_id):
+        return None
     p = _task_path(task_id)
     if not p.exists():
         return None
@@ -46,6 +56,8 @@ def load_task(task_id: str) -> Optional[Task]:
 
 
 def delete_task(task_id: str) -> bool:
+    if not is_valid_task_id(task_id):
+        return False
     p = _task_path(task_id)
     if p.exists():
         p.unlink()
@@ -54,6 +66,15 @@ def delete_task(task_id: str) -> bool:
 
 
 def create_task(req: TaskCreate) -> Task:
+    # Validate task_id
+    if not is_valid_task_id(req.task_id):
+        raise ValueError(f"Invalid task_id: {req.task_id!r}")
+
+    # Validate project_dir
+    safe, reason = is_safe_project_dir(req.project_dir)
+    if not safe:
+        raise ValueError(f"Unsafe project_dir: {reason}")
+
     task = Task(
         task_id=req.task_id,
         name=req.name,
@@ -121,7 +142,11 @@ def get_task_process_tree(task_id: str) -> Optional[ProcessInfo]:
 
 
 def get_task_log(task_id: str, lines: int = 50) -> list[str]:
+    if not is_valid_task_id(task_id):
+        return []
     log_p = _log_path(task_id)
+    if not is_safe_log_path(log_p):
+        return []
     return get_log_tail(log_p, lines)
 
 
@@ -131,7 +156,7 @@ def add_progress_note(task_id: str, note: str, step_id: Optional[str] = None) ->
     if not task:
         return None
     entry = ProgressLogEntry(
-        message=note,
+        message=sanitize_note(note),
         step_id=step_id or task.current_step_id,
     )
     task.progress_log.append(entry)

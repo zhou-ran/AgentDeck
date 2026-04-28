@@ -71,6 +71,33 @@ agentctl serve --host 0.0.0.0
 - **Task state**: `~/.agent_foreman_local/tasks/{task_id}.json`
 - **Logs**: `~/agent_logs/{task_id}.log`
 
+## Security
+
+By default, the dashboard binds to `localhost` only. For LAN access, a Bearer token is required.
+
+```bash
+# Localhost (no auth needed)
+agentctl serve
+
+# LAN access (token printed to stdout)
+agentctl serve --host 0.0.0.0
+
+# Set token via environment variable
+export AGENT_FOREMAN_TOKEN="your-secret"
+agentctl serve --host 0.0.0.0
+```
+
+**Key protections:**
+- Task IDs validated against path traversal (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+- Symlink detection on project directories
+- PID identity verification before sending signals
+- Process environment (`/proc/pid/environ`) never read
+- XSS-safe rendering (React auto-escaping)
+- Rate limiting (120 req/min per IP)
+- Atomic file writes to prevent corruption
+
+See [SECURITY.md](SECURITY.md) for the full threat model and details.
+
 ## Architecture
 
 ```

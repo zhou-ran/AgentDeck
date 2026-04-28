@@ -24,6 +24,12 @@ def _format_elapsed(start_time: float) -> str:
 
 
 def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> Optional[ProcessInfo]:
+    """Convert psutil Process to ProcessInfo.
+
+    SECURITY: We only read specific attrs via as_dict(). We NEVER read
+    proc.environ() or /proc/<pid>/environ to avoid leaking API keys,
+    secrets, or environment variables.
+    """
     try:
         info = proc.as_dict(attrs=[
             "pid", "ppid", "name", "cmdline", "status",

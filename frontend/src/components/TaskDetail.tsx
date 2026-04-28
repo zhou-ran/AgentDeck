@@ -4,6 +4,14 @@ import { api } from '../api/client'
 import { StatusBadge } from './StatusBadge'
 import { LogViewer } from './LogViewer'
 import { ProcessTree } from './ProcessTree'
+import { SparkLine } from './SparkLine'
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} B`
+}
 
 export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void }) {
   const [log, setLog] = useState<LogResponse | null>(null)
@@ -28,6 +36,11 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
     return () => clearInterval(iv)
   }, [task.task_id])
 
+  // Update taskData from SSE props
+  useEffect(() => {
+    setTaskData(task)
+  }, [task])
+
   const handleStop = async () => {
     if (!confirm('Stop this task?')) return
     await api.stopTask(task.task_id)
@@ -35,8 +48,9 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
     setTaskData(fresh)
   }
 
-  // Find current step
   const currentStep = taskData.plan.find(s => s.id === taskData.current_step_id)
+  const res = taskData.resources
+  const history = taskData.cpu_mem_history || []
 
   return (
     <div className="space-y-4">
@@ -60,25 +74,20 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
         )}
       </div>
 
-      {/* Top section: Goal, Feature, Acceptance Criteria, Current Step */}
+      {/* Top section: Goal, Feature, Current Step, Status */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Goal */}
         {taskData.goal && (
           <div className="bg-gray-900 rounded-lg p-3">
             <div className="text-gray-500 text-xs mb-1">Goal</div>
             <div className="text-gray-200 text-sm">{taskData.goal}</div>
           </div>
         )}
-
-        {/* Feature */}
         {taskData.feature && (
           <div className="bg-gray-900 rounded-lg p-3">
             <div className="text-gray-500 text-xs mb-1">Feature</div>
             <div className="text-gray-200 text-sm">{taskData.feature}</div>
           </div>
         )}
-
-        {/* Current Step */}
         {currentStep && (
           <div className="bg-gray-900 rounded-lg p-3">
             <div className="text-gray-500 text-xs mb-1">Current Step</div>
@@ -93,13 +102,81 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
             </div>
           </div>
         )}
-
-        {/* Status */}
         <div className="bg-gray-900 rounded-lg p-3">
           <div className="text-gray-500 text-xs mb-1">Status</div>
           <div className="text-gray-200 text-sm">{taskData.status}</div>
         </div>
       </div>
+
+      {/* Resource Metrics Panel */}
+      {res && (
+        <div className="bg-gray-900 rounded-lg p-4">
+          <div className="text-gray-500 text-xs mb-3 font-medium uppercase tracking-wider">Resource Usage</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-3">
+            <div>
+              <div className="text-gray-500 text-xs">CPU</div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-gray-800 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${
+                      res.cpu_percent > 80 ? 'bg-red-500' :
+                      res.cpu_percent > 50 ? 'bg-yellow-500' : 'bg-green-500'
+                    }`}
+                    style={{ width: `${Math.min(100, res.cpu_percent)}%` }}
+                  />
+                </div>
+                <span className="text-gray-200 font-mono text-xs w-14 text-right">{res.cpu_percent.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">Memory</div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-gray-800 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all ${
+                      res.memory_percent > 80 ? 'bg-red-500' : 'bg-blue-500'
+                    }`}
+                    style={{ width: `${Math.min(100, res.memory_percent)}%` }}
+                  />
+                </div>
+                <span className="text-gray-200 font-mono text-xs w-14 text-right">{res.memory_percent.toFixed(1)}%</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">RSS</div>
+              <div className="text-gray-200 font-mono">{res.rss_mb.toFixed(1)} MB</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">VMS</div>
+              <div className="text-gray-200 font-mono">{res.vms_mb.toFixed(1)} MB</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">Children</div>
+              <div className="text-gray-200 font-mono">{res.child_count}</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">Open FDs</div>
+              <div className="text-gray-200 font-mono">{res.open_files}</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">Read Bytes</div>
+              <div className="text-cyan-400 font-mono">{formatBytes(res.read_bytes)}</div>
+            </div>
+            <div>
+              <div className="text-gray-500 text-xs">Write Bytes</div>
+              <div className="text-orange-400 font-mono">{formatBytes(res.write_bytes)}</div>
+            </div>
+          </div>
+
+          {/* CPU/MEM History Chart */}
+          {history.length > 2 && (
+            <div className="mt-3 pt-3 border-t border-gray-800">
+              <div className="text-gray-500 text-xs mb-2">CPU / MEM History (last 60s)</div>
+              <SparkLine data={history} width={500} height={60} showLegend={true} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Acceptance criteria */}
       {taskData.acceptance_criteria.length > 0 && (
@@ -111,9 +188,8 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
         </div>
       )}
 
-      {/* Middle section: Plan checklist and Progress timeline */}
+      {/* Plan checklist and Progress timeline */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Plan checklist */}
         {taskData.plan.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold text-gray-300 mb-2">Plan</h3>
@@ -136,7 +212,6 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
           </div>
         )}
 
-        {/* Progress timeline */}
         <div>
           <h3 className="text-sm font-semibold text-gray-300 mb-2">Progress Timeline</h3>
           {taskData.progress_log.length > 0 ? (
@@ -163,7 +238,6 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
         </div>
       )}
 
-      {/* Bottom section: Logs, Process tree, Changed files, Risk notes */}
       {/* Process tree */}
       <div>
         <h3 className="text-sm font-semibold text-gray-300 mb-2">Process Tree</h3>

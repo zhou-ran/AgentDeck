@@ -80,3 +80,11 @@ async def api_stream():
             await asyncio.sleep(2)
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/system-metrics")
+async def api_system_metrics():
+    """Get system-wide resource metrics (CPU, memory, disk, network)."""
+    tasks = list_tasks()
+    project_dirs = list({t.project_dir for t in tasks if t.project_dir})
+    return get_system_metrics(project_dirs).model_dump()

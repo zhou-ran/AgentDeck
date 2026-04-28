@@ -40,6 +40,7 @@ from backend.task_manager import (
     update_handoff_notes,
 )
 from backend.process_scanner import is_process_alive, discover_sessions
+from backend.security import is_safe_project_dir, verify_pid_for_task, verify_pid_for_task
 
 
 @click.group()
@@ -64,6 +65,12 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
+
+    # Validate project_dir
+    safe, reason = is_safe_project_dir(project_dir)
+    if not safe:
+        click.echo(f"Error: {reason}", err=True)
+        sys.exit(1)
     cmd_str = " ".join(command)
 
     # Ensure log dir exists
@@ -128,6 +135,12 @@ def init(name: str, project_dir: str, goal: str, feature: str, criteria: tuple[s
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
+
+    # Validate project_dir
+    safe, reason = is_safe_project_dir(project_dir)
+    if not safe:
+        click.echo(f"Error: {reason}", err=True)
+        sys.exit(1)
 
     req = TaskCreate(
         task_id=task_id,
@@ -459,6 +472,13 @@ def stop(task_id: str, sig: str):
 
     if not task.pid:
         click.echo("Task has no PID.", err=True)
+        sys.exit(1)
+
+    # Verify PID identity before sending signal
+    safe, reason = verify_pid_for_task(task.pid, task.command, task.project_dir)
+    if not safe:
+        click.echo(f"PID verification failed: {reason}", err=True)
+        click.echo("The process may have been replaced. Refusing to kill.", err=True)
         sys.exit(1)
 
     if not is_process_alive(task.pid):
