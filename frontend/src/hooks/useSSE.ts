@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { Task } from '../types'
+import type { Task, DiscoveredSession, SystemMetrics } from '../types'
 
 export function useSSE() {
   const [tasks, setTasks] = useState<Task[]>([])
+  const [discovered, setDiscovered] = useState<DiscoveredSession[]>([])
+  const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null)
   const [connected, setConnected] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
@@ -13,7 +15,15 @@ export function useSSE() {
     es.addEventListener('update', (e) => {
       try {
         const data = JSON.parse(e.data)
-        setTasks(data)
+        if (data.tasks && Array.isArray(data.tasks)) {
+          setTasks(data.tasks)
+          setDiscovered(data.discovered || [])
+          if (data.system) {
+            setSystemMetrics(data.system)
+          }
+        } else if (Array.isArray(data)) {
+          setTasks(data)
+        }
       } catch {}
     })
 
@@ -21,7 +31,6 @@ export function useSSE() {
     es.onerror = () => {
       setConnected(false)
       es.close()
-      // Reconnect after 3s
       setTimeout(connect, 3000)
     }
   }, [])
@@ -33,5 +42,5 @@ export function useSSE() {
     }
   }, [connect])
 
-  return { tasks, connected }
+  return { tasks, discovered, systemMetrics, connected }
 }

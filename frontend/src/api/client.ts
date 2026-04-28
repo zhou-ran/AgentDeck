@@ -1,4 +1,4 @@
-import type { Task, ProcessInfo, LogResponse } from '../types'
+import type { Task, ProcessInfo, DiscoveredSession, LogResponse } from '../types'
 
 const BASE = '/api'
 
@@ -79,5 +79,11 @@ export const api = {
 
   getProcessTree: (id: string) => fetchJson<ProcessInfo>(`/tasks/${id}/process-tree`),
 
-  discover: () => fetchJson<{ count: number; processes: ProcessInfo[] }>('/discover'),
+  discover: () => fetchJson<{ count: number; sessions: DiscoveredSession[] }>('/discover'),
+
+  importPid: (pid: number, name: string) =>
+    fetchJson<Task>('/import-pid', {
+      method: 'POST',
+      body: JSON.stringify({ pid, name }),
+    }),
 }

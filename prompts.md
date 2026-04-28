@@ -1,8 +1,4 @@
 
-我查了一下，你给的 `operoncao123/agent-foreman` 没搜到对应结果；公开结果里更像是 `mylukin/agent-foreman`。它的核心思路是：让 AI agent 通过结构化文件维护外部记忆、一次只做一个 feature、用 acceptance criteria 管住完成标准、用 progress logs 做会话交接。这个思路很适合你要的“局域网网页监控多个本地 coding agent”。([GitHub][1])
-
-下面给你一套可以直接丢给 Codex / Claude Code / Aider 的 prompts。
-
 ---
 
 ## Prompt 1：总体需求设计

@@ -59,10 +59,27 @@ class Task(BaseModel):
     risk_notes: str = ""
     final_summary: str = ""
 
+    # Import tracking
+    imported: bool = False
+    imported_from_pid: Optional[int] = None
+
     # Legacy fields
     exit_code: Optional[int] = None
     has_error_hint: bool = False
     tags: list[str] = Field(default_factory=list)
+
+
+class ResourceMetrics(BaseModel):
+    """Per-process resource usage snapshot."""
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+    rss_mb: float = 0.0          # Resident Set Size in MB
+    vms_mb: float = 0.0          # Virtual Memory Size in MB
+    child_count: int = 0         # Number of child processes
+    open_files: int = 0          # Number of open file descriptors
+    read_bytes: float = 0.0      # Total bytes read (from /proc/pid/io)
+    write_bytes: float = 0.0     # Total bytes written
+    status: str = ""             # process status
 
 
 class ProcessInfo(BaseModel):
@@ -78,6 +95,24 @@ class ProcessInfo(BaseModel):
     create_time: float = 0.0
     elapsed: str = ""
     children: list[ProcessInfo] = Field(default_factory=list)
+    resources: Optional[ResourceMetrics] = None
+
+
+class CpuMemSample(BaseModel):
+    """Single CPU/MEM data point for history."""
+    ts: float          # timestamp (time.time())
+    cpu: float = 0.0
+    mem: float = 0.0
+
+
+class SystemMetrics(BaseModel):
+    """System-wide resource overview."""
+    cpu_percent: float = 0.0
+    mem_total_gb: float = 0.0
+    mem_used_gb: float = 0.0
+    mem_percent: float = 0.0
+    disk_usages: list[dict[str, Any]] = Field(default_factory=list)  # [{path, total_gb, used_gb, percent}]
+    net_interfaces: list[dict[str, Any]] = Field(default_factory=list)  # [{name, rx_mbps, tx_mbps}]
 
 
 class TaskCreate(BaseModel):
@@ -110,3 +145,17 @@ class TaskComplete(BaseModel):
 
 class TaskFail(BaseModel):
     reason: str
+
+
+class DiscoveredSession(BaseModel):
+    """A group of processes under the same cwd, discovered by auto-scan."""
+    session_id: str  # derived from cwd or PID
+    cwd: str
+    root_process: ProcessInfo
+    all_pids: list[int] = Field(default_factory=list)
+    agent_type: str = ""  # e.g. "codex", "claude", "python"
+
+
+class ImportPidRequest(BaseModel):
+    pid: int
+    name: str

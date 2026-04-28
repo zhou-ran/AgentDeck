@@ -1,5 +1,6 @@
 import type { Task } from '../types'
 import { StatusBadge } from './StatusBadge'
+import { SparkLine } from './SparkLine'
 
 function elapsed(started: string, ended: string | null): string {
   const start = new Date(started).getTime()
@@ -10,6 +11,13 @@ function elapsed(started: string, ended: string | null): string {
   return `${Math.floor(secs / 3600)}h${Math.floor((secs % 3600) / 60)}m`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} B`
+}
+
 export function TaskCard({ task, onClick }: { task: Task; onClick: () => void }) {
   const borderColor =
     task.status === 'running' ? 'border-green-600' :
@@ -18,6 +26,9 @@ export function TaskCard({ task, onClick }: { task: Task; onClick: () => void })
     task.status === 'idle' ? 'border-yellow-600' :
     task.status === 'completed' ? 'border-blue-600' :
     'border-gray-700'
+
+  const res = task.resources
+  const history = task.cpu_mem_history || []
 
   return (
     <div
@@ -51,6 +62,53 @@ export function TaskCard({ task, onClick }: { task: Task; onClick: () => void })
             <span className="text-gray-500">elapsed:</span> {elapsed(task.started_at, task.ended_at)}
           </span>
         </div>
+
+        {/* Resource metrics row */}
+        {res && (
+          <div className="flex gap-3 mt-1 pt-1 border-t border-gray-800">
+            <span title="CPU percent">
+              <span className="text-gray-500">CPU:</span>{' '}
+              <span className={res.cpu_percent > 80 ? 'text-red-400' : res.cpu_percent > 50 ? 'text-yellow-400' : 'text-green-400'}>
+                {res.cpu_percent.toFixed(1)}%
+              </span>
+            </span>
+            <span title="Memory percent">
+              <span className="text-gray-500">MEM:</span>{' '}
+              <span className={res.memory_percent > 80 ? 'text-red-400' : 'text-blue-400'}>
+                {res.memory_percent.toFixed(1)}%
+              </span>
+            </span>
+            <span title="RSS memory">
+              <span className="text-gray-500">RSS:</span> {res.rss_mb.toFixed(0)}M
+            </span>
+            {res.child_count > 0 && (
+              <span title="Child processes">
+                <span className="text-gray-500">children:</span> {res.child_count}
+              </span>
+            )}
+            {res.open_files > 0 && (
+              <span title="Open file descriptors">
+                <span className="text-gray-500">fds:</span> {res.open_files}
+              </span>
+            )}
+            {(res.read_bytes > 0 || res.write_bytes > 0) && (
+              <span title="I/O bytes read/written">
+                <span className="text-gray-500">io:</span>{' '}
+                <span className="text-cyan-400">{formatBytes(res.read_bytes)}</span>
+                {' / '}
+                <span className="text-orange-400">{formatBytes(res.write_bytes)}</span>
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Sparkline for active tasks */}
+        {history.length > 2 && (
+          <div className="mt-1 pt-1 border-t border-gray-800">
+            <SparkLine data={history} width={240} height={32} />
+          </div>
+        )}
+
         {task.tags.length > 0 && (
           <div className="flex gap-1 flex-wrap mt-1">
             {task.tags.map((t) => (

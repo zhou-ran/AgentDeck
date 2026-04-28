@@ -30,6 +30,7 @@ from backend.task_manager import (
     fail_task,
     generate_handoff_text,
     get_enriched_task,
+    import_pid,
     import_plan,
     list_tasks,
     load_task,
@@ -38,7 +39,7 @@ from backend.task_manager import (
     update_step,
     update_handoff_notes,
 )
-from backend.process_scanner import is_process_alive
+from backend.process_scanner import is_process_alive, discover_sessions
 
 
 @click.group()
@@ -307,6 +308,41 @@ def handoff(task_id: str, notes: str):
         sys.exit(1)
 
     click.echo(text)
+
+
+@cli.command(name="import-pid")
+@click.argument("pid", type=int)
+@click.option("--name", required=True, help="Name for the imported task")
+def import_pid_cmd(pid: int, name: str):
+    """Import an existing process as a managed task.
+
+    Example:
+      agentctl import-pid 12345 --name my-codex-session
+    """
+    task = import_pid(pid, name)
+    if not task:
+        click.echo(f"Cannot import PID {pid}: process not found or name '{name}' already exists.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Imported PID {pid} as task '{name}'")
+    click.echo(f"  Command: {task.command}")
+    click.echo(f"  Dir:     {task.project_dir}")
+
+
+@cli.command()
+def discover():
+    """Auto-discover running agent processes."""
+    sessions = discover_sessions()
+    if not sessions:
+        click.echo("No agent processes discovered.")
+        return
+
+    click.echo(f"{'SESSION':<24} {'TYPE':<10} {'PIDS':<8} {'CWD':<40}")
+    click.echo("-" * 82)
+    for s in sessions:
+        pid_str = str(len(s.all_pids))
+        cwd_display = s.cwd[:38] + ".." if len(s.cwd) > 40 else s.cwd
+        click.echo(f"{s.session_id:<24} {s.agent_type:<10} {pid_str:<8} {cwd_display:<40}")
 
 
 @cli.command(name="list")
