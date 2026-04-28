@@ -3,17 +3,31 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.log_manager import get_log_tail, get_log_size, get_log_mtime
-from backend.models import NoteAdd, Task, TaskCreate
+from backend.models import (
+    NoteAdd,
+    Task,
+    TaskCreate,
+    PlanImport,
+    StepUpdate,
+    TaskComplete,
+    TaskFail,
+)
 from backend.task_manager import (
     add_progress_note,
+    complete_task,
     create_task,
     delete_task,
+    fail_task,
+    generate_handoff_text,
     get_enriched_task,
     get_task_log,
     get_task_process_tree,
+    import_plan,
     list_tasks,
     load_task,
     save_task,
+    update_step,
+    update_handoff_notes,
 )
 
 router = APIRouter(tags=["tasks"])
@@ -72,12 +86,67 @@ async def api_stop_task(task_id: str):
     return task
 
 
+@router.post("/tasks/{task_id}/plan", response_model=Task)
+async def api_import_plan(task_id: str, body: PlanImport):
+    """Import a plan with steps."""
+    task = import_plan(task_id, body.steps)
+    if not task:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return task
+
+
+@router.put("/tasks/{task_id}/steps/{step_id}", response_model=Task)
+async def api_update_step(task_id: str, step_id: str, body: StepUpdate):
+    """Update a specific step's status."""
+    from backend.models import StepStatus
+    task = update_step(task_id, step_id, body.status, body.notes)
+    if not task:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return task
+
+
 @router.post("/tasks/{task_id}/notes", response_model=Task)
 async def api_add_note(task_id: str, body: NoteAdd):
     task = add_progress_note(task_id, body.note)
     if not task:
         raise HTTPException(404, f"Task {task_id!r} not found")
     return task
+
+
+@router.post("/tasks/{task_id}/complete", response_model=Task)
+async def api_complete_task(task_id: str, body: TaskComplete):
+    """Mark task as completed."""
+    task = complete_task(task_id, body.summary)
+    if not task:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return task
+
+
+@router.post("/tasks/{task_id}/fail", response_model=Task)
+async def api_fail_task(task_id: str, body: TaskFail):
+    """Mark task as failed."""
+    task = fail_task(task_id, body.reason)
+    if not task:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return task
+
+
+@router.put("/tasks/{task_id}/handoff")
+async def api_update_handoff(task_id: str, body: NoteAdd):
+    """Update handoff notes."""
+    task = update_handoff_notes(task_id, body.note)
+    if not task:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return {"status": "updated"}
+
+
+@router.get("/tasks/{task_id}/handoff")
+async def api_get_handoff(task_id: str):
+    """Get handoff text for next agent session."""
+    text = generate_handoff_text(task_id)
+    if text is None:
+        raise HTTPException(404, f"Task {task_id!r} not found")
+    return {"task_id": task_id, "handoff_text": text}
 
 
 @router.get("/tasks/{task_id}/logs")

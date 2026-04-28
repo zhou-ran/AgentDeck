@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,26 @@ class TaskStatus(str, Enum):
     unknown = "unknown"
 
 
+class StepStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    blocked = "blocked"
+
+
+class PlanStep(BaseModel):
+    id: str
+    title: str
+    status: StepStatus = StepStatus.pending
+    notes: str = ""
+
+
+class ProgressLogEntry(BaseModel):
+    timestamp: datetime = Field(default_factory=datetime.now)
+    message: str
+    step_id: Optional[str] = None
+
+
 class Task(BaseModel):
     task_id: str
     name: str
@@ -26,9 +46,20 @@ class Task(BaseModel):
     started_at: datetime = Field(default_factory=datetime.now)
     ended_at: Optional[datetime] = None
     last_log_update: Optional[datetime] = None
-    acceptance_criteria: str = ""
-    current_step: str = ""
-    progress_notes: list[str] = Field(default_factory=list)
+
+    # Structured task fields
+    goal: str = ""
+    feature: str = ""
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    plan: list[PlanStep] = Field(default_factory=list)
+    current_step_id: Optional[str] = None
+    progress_log: list[ProgressLogEntry] = Field(default_factory=list)
+    handoff_notes: str = ""
+    changed_files: list[str] = Field(default_factory=list)
+    risk_notes: str = ""
+    final_summary: str = ""
+
+    # Legacy fields
     exit_code: Optional[int] = None
     has_error_hint: bool = False
     tags: list[str] = Field(default_factory=list)
@@ -54,9 +85,28 @@ class TaskCreate(BaseModel):
     name: str
     project_dir: str
     command: str
-    acceptance_criteria: str = ""
+    goal: str = ""
+    feature: str = ""
+    acceptance_criteria: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+
+
+class PlanImport(BaseModel):
+    steps: list[PlanStep]
+
+
+class StepUpdate(BaseModel):
+    status: StepStatus
+    notes: str = ""
 
 
 class NoteAdd(BaseModel):
     note: str
+
+
+class TaskComplete(BaseModel):
+    summary: str
+
+
+class TaskFail(BaseModel):
+    reason: str
