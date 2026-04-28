@@ -20,7 +20,14 @@ AgentStatus — a local coding agent monitoring dashboard + CLI tool. Monitors m
 pip install -e .
 
 # CLI
+agentctl init <name> --dir <project_dir> --goal "..."
 agentctl start <name> --dir <dir> -- <command...>
+agentctl set-plan <task_id> plan.json
+agentctl note <task_id> "..."
+agentctl step <task_id> <step_id> --status running|done|blocked
+agentctl complete <task_id> --summary "..."
+agentctl fail <task_id> --reason "..."
+agentctl handoff <task_id>
 agentctl list [--all]
 agentctl status <task_id>
 agentctl stop <task_id>
@@ -41,18 +48,19 @@ python -m backend.main
 
 ```
 backend/
-├── models.py          # Pydantic models: Task, TaskStatus, ProcessInfo
+├── models.py          # Pydantic models: Task, TaskStatus, ProcessInfo, PlanStep
 ├── config.py          # Config loader (~/.agent_foreman_local/config.yaml)
-├── task_manager.py    # Task CRUD on JSON files + enrichment
+├── task_manager.py    # Task CRUD + enrichment + plan/step management
 ├── process_scanner.py # psutil-based agent discovery + process tree
-├── state_machine.py   # Status inference: running/idle/waiting/completed/failed
+├── state_machine.py   # Status inference + error hint detection
 ├── log_manager.py     # Log tail, last-N-lines, async stream
-├── cli.py             # click CLI: agentctl commands
+├── git_utils.py       # Git changed files detection
+├── cli.py             # click CLI: all agentctl commands
 ├── main.py            # FastAPI app, mounts API routers + static files
 └── api/
     ├── tasks.py       # /api/tasks CRUD, stop, notes, log, process-tree
     ├── processes.py   # /api/discover — auto-find agent processes
-    ├── sse.py         # /api/stream — SSE endpoint, pushes every 2s
+    ├── sse.py         # /api/events — SSE endpoint, pushes every 2s
     └── auth.py        # Token auth (skipped on localhost)
 
 frontend/src/
@@ -61,8 +69,8 @@ frontend/src/
 ├── api/client.ts      # Fetch wrapper for all API calls
 ├── components/
 │   ├── Dashboard.tsx   # Task card grid, active/finished sections
-│   ├── TaskCard.tsx    # Card with status badge, command, elapsed
-│   ├── TaskDetail.tsx  # Full detail: metadata, tree, logs, notes
+│   ├── TaskCard.tsx    # Card with status badge, error hint, elapsed
+│   ├── TaskDetail.tsx  # Full detail: metadata, tree, logs, plan, progress
 │   ├── ProcessTree.tsx # Recursive process tree visualization
 │   ├── LogViewer.tsx   # Log tail with error highlighting
 │   └── StatusBadge.tsx # Color-coded status indicator
@@ -73,8 +81,9 @@ frontend/src/
 
 - **Task lifecycle**: `agentctl start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
 - **State enrichment**: `task_manager.enrich_task()` combines persisted task data with live psutil data on every API call
-- **Status inference**: `state_machine.infer_status()` checks process alive/dead, CPU%, log mtime, and regex patterns in log tail
-- **SSE streaming**: `/api/stream` pushes full task list JSON every 2 seconds; frontend reconnects automatically
+- **Status inference**: `state_machine.infer_status()` checks process alive/dead, CPU%, log mtime
+- **Error detection**: `state_machine.check_error_hint()` regex-matches `Traceback|ERROR|Failed|Exception` in log tail
+- **SSE streaming**: `/api/events` pushes full task list JSON every 2 seconds; frontend reconnects automatically
 - **Frontend build**: Vite outputs to `backend/static/` which FastAPI serves as static files with HTML5 fallback
 
 ## File Locations at Runtime
