@@ -119,10 +119,10 @@ token: your-secret-token
 
 ```bash
 # Localhost only (default, recommended)
-agentctl serve
+agent-foreman-local serve
 
 # LAN access (requires token)
-agentctl serve --host 0.0.0.0 --port 8790
+agent-foreman-local serve --host 0.0.0.0 --port 8790
 # Token will be printed to stdout
 ```
 

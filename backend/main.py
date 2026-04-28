@@ -43,6 +43,8 @@ app.add_middleware(
     allow_origins=[
         "http://127.0.0.1",
         "http://localhost",
+        "http://127.0.0.1:8787",
+        "http://localhost:8787",
         "http://127.0.0.1:8790",
         "http://localhost:8790",
     ],
@@ -110,7 +112,7 @@ def run_server(host: str | None = None, port: int | None = None):
         print("  Use the Bearer token above to authenticate.", file=sys.stderr)
         print("", file=sys.stderr)
         print("  To bind to localhost only:", file=sys.stderr)
-        print("    agentctl serve --host 127.0.0.1", file=sys.stderr)
+        print("    agent-foreman-local serve --host 127.0.0.1", file=sys.stderr)
         print("=" * 60 + "\n", file=sys.stderr)
 
     uvicorn.run(app, host=h, port=p, log_level="info")

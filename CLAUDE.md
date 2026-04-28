@@ -17,33 +17,38 @@ AgentStatus — a local coding agent monitoring dashboard + CLI tool. Monitors m
 
 ```bash
 # Install
-pip install -e .
-cd frontend && npm install && npx vite build
+make install                    # pip install -e . + frontend build
+pipx install .                  # Alternative: isolated install
 
-# CLI
-agentctl init <name> --dir <project_dir> --goal "..."
-agentctl start <name> --dir <dir> -- <command...>
-agentctl set-plan <task_id> plan.json
-agentctl note <task_id> "..."
-agentctl step <task_id> <step_id> --status running|done|blocked
-agentctl complete <task_id> --summary "..."
-agentctl fail <task_id> --reason "..."
-agentctl handoff <task_id>
-agentctl list [--all]
-agentctl status <task_id>
-agentctl stop <task_id>
-agentctl tail <task_id> [-f]
-agentctl note <task_id> "message"
-agentctl step <task_id> <step_id> --status done
-agentctl set-plan <task_id> plan.json
-agentctl complete <task_id> --summary "..."
-agentctl fail <task_id> --reason "..."
-agentctl handoff <task_id>
-agentctl serve [--host 0.0.0.0] [--port 8790]
+# Development
+make dev                        # Backend (--reload) + Frontend (vite dev) concurrently
+make test                       # Run pytest
+make build-frontend             # Build frontend to backend/static/
+make clean                      # Clean build artifacts
+
+# CLI (agent-foreman-local, alias: agentctl)
+agent-foreman-local serve [--host 127.0.0.1] [--port 8787]
+agent-foreman-local start <name> --dir <dir> -- <command...>
+agent-foreman-local init <name> --dir <dir> --goal "..."
+agent-foreman-local set-plan <task_id> plan.json
+agent-foreman-local note <task_id> "..."
+agent-foreman-local step <task_id> <step_id> --status running|done|blocked
+agent-foreman-local complete <task_id> --summary "..."
+agent-foreman-local fail <task_id> --reason "..."
+agent-foreman-local handoff <task_id>
+agent-foreman-local list [--all]
+agent-foreman-local status <task_id>
+agent-foreman-local stop <task_id>
+agent-foreman-local tail <task_id> [-f]
+agent-foreman-local import-pid <pid> --name <name>
+agent-foreman-local discover
+agent-foreman-local config
+agent-foreman-local install-service [--enable]
+agent-foreman-local uninstall-service
 
 # Frontend development
 cd frontend
-npm run dev          # Vite dev server with proxy to :8790
+npm run dev          # Vite dev server with proxy to :8787
 npm run build        # Build to backend/static/
 ```
 
@@ -58,7 +63,9 @@ backend/
 ├── state_machine.py   # Status inference + error hint detection
 ├── log_manager.py     # Log tail, last-N-lines, async stream
 ├── git_utils.py       # Git changed files detection
-├── cli.py             # click CLI: all agentctl commands
+├── security.py        # Path safety, PID verify, rate limiter, atomic write
+├── systemd.py         # systemd user service generation
+├── cli.py             # click CLI: all agent-foreman-local commands
 ├── main.py            # FastAPI app, mounts API routers + static files
 └── api/
     ├── tasks.py       # /api/tasks CRUD, stop, notes, log, process-tree
@@ -70,19 +77,36 @@ frontend/src/
 ├── App.tsx            # Root: useSSE hook → Dashboard
 ├── hooks/useSSE.ts    # SSE connection with auto-reconnect
 ├── api/client.ts      # Fetch wrapper for all API calls
+├── utils/format.ts    # Shared formatBytes, elapsed helpers
 ├── components/
-│   ├── Dashboard.tsx   # Task card grid, active/finished sections
+│   ├── Dashboard.tsx   # Task card grid with filters + search
+│   ├── FilterBar.tsx   # Status filter pills + search input
 │   ├── TaskCard.tsx    # Card with status badge, error hint, elapsed
 │   ├── TaskDetail.tsx  # Full detail: metadata, tree, logs, plan, progress
 │   ├── ProcessTree.tsx # Recursive process tree visualization
 │   ├── LogViewer.tsx   # Log tail with error highlighting
+│   ├── SparkLine.tsx   # CPU/MEM history chart
+│   ├── SystemOverview.tsx # System-wide metrics display
+│   ├── DiscoveredCard.tsx # Discovered agent session card
 │   └── StatusBadge.tsx # Color-coded status indicator
 └── types/index.ts     # TypeScript interfaces
+
+tests/
+├── conftest.py           # Shared fixtures (isolated config via tmp_path)
+├── test_task_store.py    # Task CRUD, atomic write, plan/step management
+├── test_process_scanner.py # PID validation, elapsed formatting
+├── test_log_tail.py      # Log reading, tail, size, mtime
+├── test_state_machine.py # Status inference, error detection
+└── test_security.py      # Path safety, task_id regex, rate limiter
+
+scripts/
+├── demo_long_task.sh     # Long-running task demo
+└── demo_fail_task.sh     # Failing task demo
 ```
 
 ## Key Patterns
 
-- **Task lifecycle**: `agentctl start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
+- **Task lifecycle**: `agent-foreman-local start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
 - **State enrichment**: `task_manager.enrich_task()` combines persisted task data with live psutil data on every API call
 - **Status inference**: `state_machine.infer_status()` checks process alive/dead, CPU%, log mtime
 - **Error detection**: `state_machine.check_error_hint()` regex-matches `Traceback|ERROR|Failed|Exception` in log tail
@@ -94,3 +118,4 @@ frontend/src/
 - Config: `~/.agent_foreman_local/config.yaml`
 - Task state: `~/.agent_foreman_local/tasks/{task_id}.json`
 - Logs: `~/agent_logs/{task_id}.log`
+- systemd service: `~/.config/systemd/user/agent-foreman-local.service`

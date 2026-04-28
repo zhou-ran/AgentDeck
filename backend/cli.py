@@ -45,7 +45,7 @@ from backend.security import is_safe_project_dir, verify_pid_for_task, verify_pi
 
 @click.group()
 def cli():
-    """agentctl — Manage and monitor coding agent tasks."""
+    """agent-foreman-local — Manage and monitor coding agent tasks."""
     pass
 
 
@@ -61,7 +61,7 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     """Start a new agent task.
 
     Example:
-      agentctl start my-training --dir /data/proj --goal "Train model" -- python train.py --epochs 10
+      agent-foreman-local start my-training --dir /data/proj --goal "Train model" -- python train.py --epochs 10
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
@@ -117,7 +117,7 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     click.echo(f"  Dir:     {project_dir}")
     click.echo(f"  Goal:    {goal or '(not specified)'}")
     click.echo(f"  Log:     {log_path}")
-    click.echo(f"\nUse 'agentctl tail {task_id}' to watch output")
+    click.echo(f"\nUse 'agent-foreman-local tail {task_id}' to watch output")
 
 
 @cli.command()
@@ -131,7 +131,7 @@ def init(name: str, project_dir: str, goal: str, feature: str, criteria: tuple[s
     """Initialize a new task with goal and acceptance criteria (no command yet).
 
     Example:
-      agentctl init my-task --dir /data/proj --goal "Implement auth" --criteria "Tests pass" --criteria "No lint errors"
+      agent-foreman-local init my-task --dir /data/proj --goal "Implement auth" --criteria "Tests pass" --criteria "No lint errors"
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
@@ -163,7 +163,7 @@ def init(name: str, project_dir: str, goal: str, feature: str, criteria: tuple[s
         click.echo(f"  Criteria:")
         for c in criteria:
             click.echo(f"    - {c}")
-    click.echo(f"\nUse 'agentctl set-plan {task_id} plan.md' to import a plan")
+    click.echo(f"\nUse 'agent-foreman-local set-plan {task_id} plan.md' to import a plan")
 
 
 @cli.command(name="set-plan")
@@ -233,7 +233,7 @@ def add_note(task_id: str, note_text: str, step_id: str | None):
     """Add a progress note to a task.
 
     Example:
-      agentctl note my-task "Completed API endpoint implementation"
+      agent-foreman-local note my-task "Completed API endpoint implementation"
     """
     task = add_progress_note(task_id, note_text, step_id)
     if not task:
@@ -253,7 +253,7 @@ def update_step_cmd(task_id: str, step_id: str, step_status: str, notes: str):
     """Update the status of a plan step.
 
     Example:
-      agentctl step my-task 1 --status done --notes "Implemented and tested"
+      agent-foreman-local step my-task 1 --status done --notes "Implemented and tested"
     """
     status_enum = StepStatus(step_status)
     task = update_step(task_id, step_id, status_enum, notes)
@@ -271,7 +271,7 @@ def complete_cmd(task_id: str, summary: str):
     """Mark a task as completed with a summary.
 
     Example:
-      agentctl complete my-task --summary "All tests passing, API implemented"
+      agent-foreman-local complete my-task --summary "All tests passing, API implemented"
     """
     task = complete_task(task_id, summary)
     if not task:
@@ -289,7 +289,7 @@ def fail_cmd(task_id: str, reason: str):
     """Mark a task as failed with a reason.
 
     Example:
-      agentctl fail my-task --reason "Database connection timeout"
+      agent-foreman-local fail my-task --reason "Database connection timeout"
     """
     task = fail_task(task_id, reason)
     if not task:
@@ -307,7 +307,7 @@ def handoff(task_id: str, notes: str):
     """Generate handoff text for next agent session.
 
     Example:
-      agentctl handoff my-task --notes "Need to review auth middleware"
+      agent-foreman-local handoff my-task --notes "Need to review auth middleware"
     """
     if notes:
         task = update_handoff_notes(task_id, notes)
@@ -330,7 +330,7 @@ def import_pid_cmd(pid: int, name: str):
     """Import an existing process as a managed task.
 
     Example:
-      agentctl import-pid 12345 --name my-codex-session
+      agent-foreman-local import-pid 12345 --name my-codex-session
     """
     task = import_pid(pid, name)
     if not task:
@@ -583,6 +583,53 @@ def show_config():
     click.echo(f"Port:        {get_port()}")
     click.echo(f"Log dir:     {get_log_dir()}")
     click.echo(f"Tasks dir:   {Path.home() / '.agent_foreman_local' / 'tasks'}")
+
+
+@cli.command(name="install-service")
+@click.option("--host", default="127.0.0.1", help="Bind host")
+@click.option("--port", default=8787, type=int, help="Bind port")
+@click.option("--enable", is_flag=True, help="Enable service to start on login")
+def install_service_cmd(host: str, port: int, enable: bool):
+    """Install systemd user service for auto-start.
+
+    Generates ~/.config/systemd/user/agent-foreman-local.service
+
+    After install:
+      systemctl --user start agent-foreman-local
+      systemctl --user status agent-foreman-local
+      journalctl --user -u agent-foreman-local -f
+    """
+    from backend.systemd import install_service
+
+    ok, msg = install_service(host=host, port=port, enable=enable)
+    if not ok:
+        click.echo(f"Error: {msg}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Service installed: {msg}")
+    click.echo(f"  Host: {host}")
+    click.echo(f"  Port: {port}")
+    click.echo(f"\nStart the service:")
+    click.echo(f"  systemctl --user start agent-foreman-local")
+    click.echo(f"\nView logs:")
+    click.echo(f"  journalctl --user -u agent-foreman-local -f")
+    if enable:
+        click.echo(f"\nAuto-start on login: ENABLED")
+    else:
+        click.echo(f"\nTo enable auto-start on login:")
+        click.echo(f"  systemctl --user enable agent-foreman-local")
+
+
+@cli.command(name="uninstall-service")
+def uninstall_service_cmd():
+    """Remove systemd user service."""
+    from backend.systemd import uninstall_service
+
+    ok, msg = uninstall_service()
+    if not ok:
+        click.echo(f"Error: {msg}", err=True)
+        sys.exit(1)
+    click.echo(msg)
 
 
 if __name__ == "__main__":

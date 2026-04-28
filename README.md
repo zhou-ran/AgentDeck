@@ -1,122 +1,182 @@
 # AgentStatus — Local Coding Agent Supervisor
 
-A unified web dashboard and CLI for monitoring multiple coding agents (codex, claude, aider, gemini, pytest, npm, git, Rscript, etc.) running on a Linux server.
-
-## Install
-
-```bash
-pip install -e .
-cd frontend && npm install && npx vite build
-```
+A unified web dashboard and CLI for monitoring coding agents
+(codex, claude, aider, gemini, pytest, npm, git, etc.) on a Linux server.
 
 ## Quick Start
 
+### One-click Install
+
 ```bash
-# Start a monitored task
-agentctl start my-training --dir /data/proj --goal "Train model" -- python train.py --epochs 10
-
-# List tasks
-agentctl list
-
-# Launch the dashboard
-agentctl serve --host 0.0.0.0
-
-# Open http://<server-ip>:8790 in your browser
+git clone <repo>
+cd agentstatus
+make install
 ```
 
-## CLI Commands
+Or via pipx:
+```bash
+pipx install .
+```
+
+### Start the Dashboard
+
+```bash
+agent-foreman-local serve
+# -> http://127.0.0.1:8787
+```
+
+### Start a Monitored Task
+
+```bash
+agent-foreman-local start my-training \
+  --dir /data/project \
+  --goal "Train model" \
+  -- python train.py --epochs 10
+```
+
+### Watch Logs
+
+```bash
+agent-foreman-local tail my-training -f
+```
+
+### Stop a Task
+
+```bash
+agent-foreman-local stop my-training
+```
+
+### Import an Existing Process
+
+```bash
+agent-foreman-local import-pid 12345 --name my-codex-session
+```
+
+## CLI Reference
 
 | Command | Description |
 |---------|-------------|
-| `agentctl start <name> --dir <dir> [--goal G] [--criteria C] -- <cmd...>` | Start a monitored task |
-| `agentctl init <name> --dir <dir> --goal G` | Initialize a task without a command |
-| `agentctl list [--all]` | List tasks (active only, or all) |
-| `agentctl status <task_id>` | Show detailed task status |
-| `agentctl stop <task_id>` | Stop a task |
-| `agentctl tail <task_id> [-f] [-n 100]` | Tail task log output |
-| `agentctl note <task_id> "message"` | Add a progress note |
-| `agentctl step <task_id> <step_id> --status done` | Update a plan step |
-| `agentctl set-plan <task_id> plan.json` | Import a plan |
-| `agentctl complete <task_id> --summary "..."` | Mark task completed |
-| `agentctl fail <task_id> --reason "..."` | Mark task failed |
-| `agentctl handoff <task_id>` | Generate handoff text |
-| `agentctl serve [--host 0.0.0.0] [--port 8790]` | Start the web dashboard |
-| `agentctl config` | Show current configuration |
+| `agent-foreman-local serve [--host H] [--port P]` | Start the web dashboard |
+| `agent-foreman-local start <name> --dir <dir> [--goal G] [--criteria C] -- <cmd...>` | Start a monitored task |
+| `agent-foreman-local init <name> --dir <dir> --goal G` | Initialize a task without a command |
+| `agent-foreman-local list [--all]` | List tasks |
+| `agent-foreman-local status <task_id>` | Show detailed task status |
+| `agent-foreman-local stop <task_id> [--signal KILL]` | Stop a task |
+| `agent-foreman-local tail <task_id> [-f] [-n 100]` | Tail log output |
+| `agent-foreman-local note <task_id> "message"` | Add a progress note |
+| `agent-foreman-local step <task_id> <step_id> --status done` | Update a plan step |
+| `agent-foreman-local set-plan <task_id> plan.json` | Import a plan |
+| `agent-foreman-local complete <task_id> --summary "..."` | Mark task completed |
+| `agent-foreman-local fail <task_id> --reason "..."` | Mark task failed |
+| `agent-foreman-local handoff <task_id>` | Generate handoff text |
+| `agent-foreman-local config` | Show current configuration |
+| `agent-foreman-local install-service [--enable]` | Install systemd user service |
+| `agent-foreman-local uninstall-service` | Remove systemd user service |
+
+> `agentctl` is an alias for `agent-foreman-local` for backward compatibility.
+
+## LAN Access
+
+By default, the dashboard binds to `127.0.0.1` (localhost only).
+
+For LAN access:
+```bash
+agent-foreman-local serve --host 0.0.0.0 --port 8787
+# Token is printed to stdout
+# Use: curl -H "Authorization: Bearer <token>" http://<ip>:8787/api/tasks
+```
+
+Set a custom token:
+```bash
+export AGENT_FOREMAN_TOKEN="my-secret"
+agent-foreman-local serve --host 0.0.0.0
+```
+
+## Token Configuration
+
+1. **Environment variable** (recommended):
+   ```bash
+   export AGENT_FOREMAN_TOKEN="your-secret"
+   ```
+
+2. **Config file** (`~/.agent_foreman_local/config.yaml`):
+   ```yaml
+   token: your-secret
+   ```
+
+3. **Auto-generated** on first `serve` run.
+
+## Auto-start with systemd
+
+```bash
+# Install service
+agent-foreman-local install-service --enable
+
+# Manage
+systemctl --user start agent-foreman-local
+systemctl --user stop agent-foreman-local
+systemctl --user status agent-foreman-local
+journalctl --user -u agent-foreman-local -f
+
+# Uninstall
+agent-foreman-local uninstall-service
+```
+
+## Development
+
+```bash
+make dev       # Backend (--reload) + Frontend (vite dev) concurrently
+make test      # Run pytest
+make build-frontend  # Build frontend
+make clean     # Clean build artifacts
+```
 
 ## Task States
 
 | State | Color | Meaning |
 |-------|-------|---------|
-| `running` | Green | Process active, CPU or log activity detected |
-| `idle` | Yellow | Process alive but CPU < 0.5% and log not updated in 5 min |
+| `running` | Green | Process active, CPU or log activity |
+| `idle` | Yellow | Process alive, CPU < 0.5%, log stale 5 min |
+| `waiting_input` | Orange | Process waiting for user input |
 | `completed` | Blue | Process exited cleanly |
-| `failed` | Red | Process exited with error, or log contains error markers |
-
-`has_error_hint=true` is set when the log contains `Traceback`, `ERROR`, `Failed`, or `Exception`.
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/tasks` | List all tasks |
-| GET | `/api/tasks/{id}` | Task detail |
-| GET | `/api/tasks/{id}/logs?lines=50` | Last N log lines |
-| GET | `/api/tasks/{id}/process-tree` | Process tree |
-| POST | `/api/tasks/{id}/stop` | Stop a task |
-| GET | `/api/events` | SSE stream (pushes every 2s) |
+| `failed` | Red | Process exited with error or error in log |
 
 ## File Locations
 
-- **Config**: `~/.agent_foreman_local/config.yaml`
-- **Task state**: `~/.agent_foreman_local/tasks/{task_id}.json`
-- **Logs**: `~/agent_logs/{task_id}.log`
+| What | Path |
+|------|------|
+| Config | `~/.agent_foreman_local/config.yaml` |
+| Task state | `~/.agent_foreman_local/tasks/{task_id}.json` |
+| Logs | `~/agent_logs/{task_id}.log` |
+| systemd service | `~/.config/systemd/user/agent-foreman-local.service` |
 
 ## Security
 
-By default, the dashboard binds to `localhost` only. For LAN access, a Bearer token is required.
+- Default bind: `127.0.0.1` (localhost only)
+- Token auth for LAN access
+- Path traversal prevention
+- PID verification before kill
+- Process env never read
+- Rate limiting (120 req/min)
+- Atomic file writes
 
-```bash
-# Localhost (no auth needed)
-agentctl serve
-
-# LAN access (token printed to stdout)
-agentctl serve --host 0.0.0.0
-
-# Set token via environment variable
-export AGENT_FOREMAN_TOKEN="your-secret"
-agentctl serve --host 0.0.0.0
-```
-
-**Key protections:**
-- Task IDs validated against path traversal (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
-- Symlink detection on project directories
-- PID identity verification before sending signals
-- Process environment (`/proc/pid/environ`) never read
-- XSS-safe rendering (React auto-escaping)
-- Rate limiting (120 req/min per IP)
-- Atomic file writes to prevent corruption
-
-See [SECURITY.md](SECURITY.md) for the full threat model and details.
+See [SECURITY.md](SECURITY.md) for the full threat model.
 
 ## Architecture
 
 ```
-Backend (Python FastAPI)
-├── Process monitoring (psutil) — discovers running agents
-├── Task management (JSON files) — structured task state
-├── State machine — infers status from process + log signals
-├── SSE streaming — real-time updates to frontend
-└── REST API — CRUD + log + process tree endpoints
+Backend (Python 3.11+ / FastAPI)
++-- CLI (click) -- agent-foreman-local commands
++-- Task Manager -- JSON file CRUD + enrichment
++-- Process Scanner -- psutil agent discovery
++-- State Machine -- status inference
++-- Log Manager -- efficient tail + async stream
++-- SSE -- real-time push to frontend
++-- Security -- auth, path safety, rate limiting
 
-CLI (click)
-├── agentctl start/init — launches subprocess with log redirect
-├── agentctl list/status/stop/tail/note/step/complete/fail — task lifecycle
-├── agentctl set-plan — import plan steps
-├── agentctl handoff — generate handoff text for next agent session
-└── agentctl serve — starts the web dashboard
-
-Frontend (React + Vite + Tailwind)
-├── Dashboard — task card grid with auto-refresh via SSE
-├── Task detail — metadata, process tree, log viewer, plan steps
-└── Status badges — color-coded task states
+Frontend (React 19 / TypeScript / Vite / Tailwind)
++-- Dashboard -- task grid with filters + search
++-- Task Detail -- metadata, logs, process tree, plan
++-- System Overview -- CPU, memory, disk, network
++-- SSE Hook -- auto-reconnecting event stream
 ```

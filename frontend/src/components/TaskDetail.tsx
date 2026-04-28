@@ -5,13 +5,7 @@ import { StatusBadge } from './StatusBadge'
 import { LogViewer } from './LogViewer'
 import { ProcessTree } from './ProcessTree'
 import { SparkLine } from './SparkLine'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${bytes} B`
-}
+import { formatBytes } from '../utils/format'
 
 export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void }) {
   const [log, setLog] = useState<LogResponse | null>(null)
@@ -72,6 +66,17 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
             Stop
           </button>
         )}
+        <button
+          onClick={async () => {
+            try {
+              const data = await api.getHandoff(taskData.task_id)
+              await navigator.clipboard.writeText(data.handoff_text)
+            } catch {}
+          }}
+          className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+        >
+          Copy Handoff
+        </button>
       </div>
 
       {/* Top section: Goal, Feature, Current Step, Status */}
@@ -233,7 +238,15 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
       {/* Handoff notes */}
       {taskData.handoff_notes && (
         <div className="bg-gray-900 rounded-lg p-3">
-          <div className="text-gray-500 text-xs mb-1">Handoff Notes</div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-gray-500 text-xs">Handoff Notes</div>
+            <button
+              onClick={() => navigator.clipboard.writeText(taskData.handoff_notes)}
+              className="text-xs text-gray-400 hover:text-white px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700"
+            >
+              Copy
+            </button>
+          </div>
           <div className="text-gray-200 text-sm whitespace-pre-wrap">{taskData.handoff_notes}</div>
         </div>
       )}

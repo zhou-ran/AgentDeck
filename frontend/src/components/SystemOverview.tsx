@@ -1,9 +1,5 @@
 import type { SystemMetrics } from '../types'
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1) return `${bytes.toFixed(1)} MB/s`
-  return `${(bytes * 1024).toFixed(0)} KB/s`
-}
+import { formatBytesRate } from '../utils/format'
 
 export function SystemOverview({ metrics }: { metrics: SystemMetrics | null }) {
   if (!metrics) return null
@@ -76,8 +72,8 @@ export function SystemOverview({ metrics }: { metrics: SystemMetrics | null }) {
             {metrics.net_interfaces.map((iface) => (
               <div key={iface.name} className="text-xs">
                 <span className="text-gray-400 font-mono">{iface.name}</span>
-                <span className="text-green-400 ml-2">&#8593; {formatBytes(iface.tx_mbps)}</span>
-                <span className="text-blue-400 ml-2">&#8595; {formatBytes(iface.rx_mbps)}</span>
+                <span className="text-green-400 ml-2">&#8593; {formatBytesRate(iface.tx_mbps)}</span>
+                <span className="text-blue-400 ml-2">&#8595; {formatBytesRate(iface.rx_mbps)}</span>
               </div>
             ))}
           </div>
