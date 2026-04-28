@@ -101,13 +101,6 @@ def get_changed_files(project_dir: str) -> list[str]:
             if line:
                 changed.add(line)
 
-    # Get staged files from git diff --cached
-    diff_cached_output = run_git_command(
-        project_dir, ["diff", "--cached", "--name-only"]
-    )
-    # Note: diff --cached is not in whitelist, so this won't work
-    # We rely on git status which shows staged files
-
     return sorted(changed)
 
 

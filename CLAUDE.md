@@ -21,7 +21,14 @@ pip install -e .
 cd frontend && npm install && npx vite build
 
 # CLI
+agentctl init <name> --dir <project_dir> --goal "..."
 agentctl start <name> --dir <dir> -- <command...>
+agentctl set-plan <task_id> plan.json
+agentctl note <task_id> "..."
+agentctl step <task_id> <step_id> --status running|done|blocked
+agentctl complete <task_id> --summary "..."
+agentctl fail <task_id> --reason "..."
+agentctl handoff <task_id>
 agentctl list [--all]
 agentctl status <task_id>
 agentctl stop <task_id>
