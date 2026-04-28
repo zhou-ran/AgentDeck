@@ -1,0 +1,13 @@
+# AgentStatus Configuration
+# Located at: ~/.agent_foreman_local/config.yaml
+
+# Server binding
+host: "127.0.0.1"    # Use "0.0.0.0" for LAN access
+port: 8790
+
+# Auto-generated on first run
+# token: "your-secret-token"
+
+# Directories
+log_dir: "~/agent_logs"
+tasks_dir: "~/.agent_foreman_local/tasks"

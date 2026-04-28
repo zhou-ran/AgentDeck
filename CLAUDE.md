@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project
+
+AgentStatus — a local coding agent monitoring dashboard + CLI tool. Monitors multiple coding agents (codex, claude, aider, gemini, pytest, npm, git, Rscript, etc.) on a Linux server with a unified web UI.
+
+## Tech Stack
+
+- **Backend**: Python 3.11+, FastAPI, psutil, click, uvicorn
+- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS
+- **Communication**: SSE (server-sent events) for real-time updates
+- **State storage**: JSON files (no database)
+
+## Commands
+
+```bash
+# Install (editable mode)
+pip install -e .
+
+# CLI
+agentctl start <name> --dir <dir> -- <command...>
+agentctl list [--all]
+agentctl status <task_id>
+agentctl stop <task_id>
+agentctl tail <task_id> [-f]
+agentctl serve [--host 0.0.0.0] [--port 8790]
+
+# Frontend development
+cd frontend
+npm install
+npm run dev          # Vite dev server with proxy to :8790
+npm run build        # Build to backend/static/
+
+# Run backend directly
+python -m backend.main
+```
+
+## Architecture
+
+```
+backend/
+├── models.py          # Pydantic models: Task, TaskStatus, ProcessInfo
+├── config.py          # Config loader (~/.agent_foreman_local/config.yaml)
+├── task_manager.py    # Task CRUD on JSON files + enrichment
+├── process_scanner.py # psutil-based agent discovery + process tree
+├── state_machine.py   # Status inference: running/idle/waiting/completed/failed
+├── log_manager.py     # Log tail, last-N-lines, async stream
+├── cli.py             # click CLI: agentctl commands
+├── main.py            # FastAPI app, mounts API routers + static files
+└── api/
+    ├── tasks.py       # /api/tasks CRUD, stop, notes, log, process-tree
+    ├── processes.py   # /api/discover — auto-find agent processes
+    ├── sse.py         # /api/stream — SSE endpoint, pushes every 2s
+    └── auth.py        # Token auth (skipped on localhost)
+
+frontend/src/
+├── App.tsx            # Root: useSSE hook → Dashboard
+├── hooks/useSSE.ts    # SSE connection with auto-reconnect
+├── api/client.ts      # Fetch wrapper for all API calls
+├── components/
+│   ├── Dashboard.tsx   # Task card grid, active/finished sections
+│   ├── TaskCard.tsx    # Card with status badge, command, elapsed
+│   ├── TaskDetail.tsx  # Full detail: metadata, tree, logs, notes
+│   ├── ProcessTree.tsx # Recursive process tree visualization
+│   ├── LogViewer.tsx   # Log tail with error highlighting
+│   └── StatusBadge.tsx # Color-coded status indicator
+└── types/index.ts     # TypeScript interfaces
+```
+
+## Key Patterns
+
+- **Task lifecycle**: `agentctl start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
+- **State enrichment**: `task_manager.enrich_task()` combines persisted task data with live psutil data on every API call
+- **Status inference**: `state_machine.infer_status()` checks process alive/dead, CPU%, log mtime, and regex patterns in log tail
+- **SSE streaming**: `/api/stream` pushes full task list JSON every 2 seconds; frontend reconnects automatically
+- **Frontend build**: Vite outputs to `backend/static/` which FastAPI serves as static files with HTML5 fallback
+
+## File Locations at Runtime
+
+- Config: `~/.agent_foreman_local/config.yaml`
+- Task state: `~/.agent_foreman_local/tasks/{task_id}.json`
+- Logs: `~/agent_logs/{task_id}.log`

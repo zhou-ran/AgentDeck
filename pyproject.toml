@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentstatus"
+version = "0.1.0"
+description = "Local coding agent monitoring dashboard"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psutil>=5.9",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "aiofiles>=24.1",
+    "sse-starlette>=2.1",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+agentctl = "backend.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
