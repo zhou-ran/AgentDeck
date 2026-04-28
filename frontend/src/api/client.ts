@@ -24,7 +24,9 @@ export const api = {
     name: string
     project_dir: string
     command: string
-    acceptance_criteria?: string
+    goal?: string
+    feature?: string
+    acceptance_criteria?: string[]
     tags?: string[]
   }) => fetchJson<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) }),
 
@@ -33,11 +35,44 @@ export const api = {
 
   stopTask: (id: string) => fetchJson<Task>(`/tasks/${id}/stop`, { method: 'POST' }),
 
-  addNote: (id: string, note: string) =>
+  importPlan: (id: string, steps: { id: string; title: string }[]) =>
+    fetchJson<Task>(`/tasks/${id}/plan`, {
+      method: 'POST',
+      body: JSON.stringify({ steps }),
+    }),
+
+  updateStep: (id: string, stepId: string, status: string, notes?: string) =>
+    fetchJson<Task>(`/tasks/${id}/steps/${stepId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status, notes: notes || '' }),
+    }),
+
+  addNote: (id: string, note: string, stepId?: string) =>
     fetchJson<Task>(`/tasks/${id}/notes`, {
       method: 'POST',
-      body: JSON.stringify({ note }),
+      body: JSON.stringify({ note, step_id: stepId }),
     }),
+
+  completeTask: (id: string, summary: string) =>
+    fetchJson<Task>(`/tasks/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ summary }),
+    }),
+
+  failTask: (id: string, reason: string) =>
+    fetchJson<Task>(`/tasks/${id}/fail`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  updateHandoff: (id: string, notes: string) =>
+    fetchJson<{ status: string }>(`/tasks/${id}/handoff`, {
+      method: 'PUT',
+      body: JSON.stringify({ note: notes }),
+    }),
+
+  getHandoff: (id: string) =>
+    fetchJson<{ task_id: string; handoff_text: string }>(`/tasks/${id}/handoff`),
 
   getLog: (id: string, lines = 50) =>
     fetchJson<LogResponse>(`/tasks/${id}/logs?lines=${lines}`),

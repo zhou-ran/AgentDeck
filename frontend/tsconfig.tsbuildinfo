@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/api/client.ts","./src/components/Dashboard.tsx","./src/components/LogViewer.tsx","./src/components/ProcessTree.tsx","./src/components/StatusBadge.tsx","./src/components/TaskCard.tsx","./src/components/TaskDetail.tsx","./src/hooks/useSSE.ts","./src/types/index.ts"],"version":"5.8.3"}
