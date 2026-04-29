@@ -14,6 +14,7 @@ export function TopToolbar({
   onOpenPalette,
   connected,
   scanMeta,
+  demoMode = false,
 }: {
   search: string
   onSearch: (value: string) => void
@@ -21,17 +22,25 @@ export function TopToolbar({
   onOpenPalette?: () => void
   connected: boolean
   scanMeta: ScanMeta | null
+  demoMode?: boolean
 }) {
   return (
     <header className="sticky top-0 z-30 px-4 pt-3 lg:px-6">
-      <div className="glass-panel flex items-center gap-3 rounded-[22px] px-3 py-2">
-        <div className="hidden min-w-[180px] items-center gap-2 lg:flex">
+      <div className="glass-panel flex flex-wrap items-center gap-3 rounded-[22px] px-3 py-2 lg:flex-nowrap">
+        <div className="hidden min-w-[240px] items-center gap-2 lg:flex">
           <div className="grid h-8 w-8 place-items-center rounded-xl border border-[var(--border)] bg-white/70 shadow-sm">
             <span className="h-3 w-3 rounded-full bg-[var(--blue)] shadow-[0_0_0_5px_rgba(0,122,255,0.14)]" />
           </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight text-app">AgentDeck</div>
-            <div className="text-[11px] leading-tight text-muted">Mission Control</div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="truncate text-sm font-semibold leading-tight text-app">Mission Control</div>
+              {demoMode && (
+                <span className="rounded-full border border-blue-500/15 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                  Demo
+                </span>
+              )}
+            </div>
+            <div className="truncate text-[11px] leading-tight text-muted">Codex, Claude, Kimi and local agents</div>
           </div>
         </div>
 

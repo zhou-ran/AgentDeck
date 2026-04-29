@@ -51,6 +51,28 @@ def _truncate(text: str | None, limit: int = 240) -> str:
     return one if len(one) <= limit else one[:limit - 1] + "…"
 
 
+def _conversation_item(role: str, text: str | None, ts: float | None, source: str = "session_file") -> dict[str, Any] | None:
+    body = _truncate(text, 420)
+    if not body:
+        return None
+    return {"role": role, "text": body, "ts": ts, "source": source}
+
+
+def _text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") in {"text", "output_text"} and item.get("text"):
+                    parts.append(str(item["text"]))
+            elif isinstance(item, str):
+                parts.append(item)
+        return " ".join(parts)
+    return ""
+
+
 def _expand_path(path: str | None) -> str | None:
     """Expand ~ in paths."""
     if not path:
@@ -125,6 +147,7 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
         "recent_output": "",
         "pending_items": [],
         "last_user_message": "",
+        "conversation": [],
         "source_file": str(path),
         "git_branch": None,
     }
@@ -157,6 +180,29 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
     recent_tool = ""
     last_user = ""
     last_ts = meta["heartbeat_ts"]
+    conversation: deque[dict[str, Any]] = deque(maxlen=10)
+    for line in tail:
+        obj = _safe_json_loads(line)
+        if not isinstance(obj, dict):
+            continue
+        ts = _parse_iso_ts(obj.get("timestamp"))
+        if obj.get("type") == "event_msg":
+            ep = obj.get("payload", {})
+            if ep.get("type") == "user_message":
+                item = _conversation_item("user", ep.get("message"), ts)
+                if item:
+                    conversation.append(item)
+            elif ep.get("type") == "agent_message":
+                item = _conversation_item("assistant", ep.get("message"), ts)
+                if item:
+                    conversation.append(item)
+        elif obj.get("type") == "response_item":
+            payload = obj.get("payload", {})
+            candidate = _extract_codex_message(payload) or ""
+            role = "tool" if candidate.startswith("tool:") else "assistant"
+            item = _conversation_item(role, candidate, ts)
+            if item:
+                conversation.append(item)
     for line in reversed(tail):
         obj = _safe_json_loads(line)
         if not isinstance(obj, dict):
@@ -184,6 +230,7 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
     meta["recent_output"] = _truncate(recent_text or recent_tool)
     meta["pending_items"] = pending or ([_truncate(last_user, 180)] if last_user else [])
     meta["last_user_message"] = _truncate(last_user, 180)
+    meta["conversation"] = list(conversation)
     meta["heartbeat_ts"] = last_ts
     return meta
 
@@ -208,6 +255,7 @@ def parse_claude_session(path: Path) -> dict[str, Any] | None:
     recent_output = ""
     last_user = ""
     git_branch = None
+    conversation: deque[dict[str, Any]] = deque(maxlen=10)
 
     for raw in lines:
         obj = _safe_json_loads(raw)
@@ -222,6 +270,15 @@ def parse_claude_session(path: Path) -> dict[str, Any] | None:
             cwd = obj.get("cwd")
         if not git_branch and obj.get("gitBranch"):
             git_branch = obj.get("gitBranch")
+        if obj.get("type") == "user":
+            msg = obj.get("message", {})
+            item = _conversation_item("user", _text_from_content(msg.get("content")), ts)
+            if item:
+                conversation.append(item)
+        elif obj.get("type") in {"assistant", "summary", "last-prompt"}:
+            item = _conversation_item("assistant", _extract_claude_assistant_text(obj), ts)
+            if item:
+                conversation.append(item)
 
     for raw in reversed(lines[-80:]):
         obj = _safe_json_loads(raw)
@@ -256,6 +313,7 @@ def parse_claude_session(path: Path) -> dict[str, Any] | None:
         "recent_output": _truncate(recent_output),
         "pending_items": pending_items[:8],
         "last_user_message": _truncate(last_user, 180),
+        "conversation": list(conversation),
         "git_branch": git_branch,
         "source_file": str(path),
     }
@@ -274,6 +332,7 @@ def parse_kimi_session(path: Path) -> dict[str, Any] | None:
         "recent_output": "",
         "pending_items": [],
         "last_user_message": "",
+        "conversation": [],
         "source_file": str(path),
         "git_branch": None,
     }
@@ -288,6 +347,7 @@ def parse_kimi_session(path: Path) -> dict[str, Any] | None:
     last_ts = meta["heartbeat_ts"]
     recent_text = ""
     last_user = ""
+    conversation: deque[dict[str, Any]] = deque(maxlen=10)
 
     for raw in lines:
         obj = _safe_json_loads(raw)
@@ -301,6 +361,14 @@ def parse_kimi_session(path: Path) -> dict[str, Any] | None:
                 meta["start_ts"] = ts
         if not meta["cwd"] and obj.get("cwd"):
             meta["cwd"] = obj.get("cwd")
+        role = obj.get("role") or obj.get("type")
+        if role in {"user", "assistant"}:
+            text = _text_from_content(obj.get("content"))
+            if not text:
+                text = obj.get("message", "") if isinstance(obj.get("message", ""), str) else ""
+            item = _conversation_item(role, text, ts)
+            if item:
+                conversation.append(item)
 
     # Scan last 80 lines for content
     for raw in reversed(lines[-80:]):
@@ -334,6 +402,7 @@ def parse_kimi_session(path: Path) -> dict[str, Any] | None:
 
     meta["recent_output"] = _truncate(recent_text)
     meta["last_user_message"] = _truncate(last_user, 180)
+    meta["conversation"] = list(conversation)
     meta["heartbeat_ts"] = last_ts
     return meta
 

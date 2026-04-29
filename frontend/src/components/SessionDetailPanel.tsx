@@ -103,6 +103,11 @@ export function SessionDetailPanel({
       </section>
 
       <section className="mt-5">
+        <SectionTitle title="Session Context" detail={session.source_file ? 'from session' : undefined} />
+        <SessionContext session={session} />
+      </section>
+
+      <section className="mt-5">
         <SectionTitle title="User Instruction" detail={session.instruction_source || session.instruction?.source || undefined} />
         <div className="quiet-panel max-h-36 overflow-auto rounded-2xl p-3 text-sm leading-relaxed text-app">{instruction}</div>
       </section>
@@ -214,6 +219,64 @@ function InfoLine({ label, value }: { label: string; value: string }) {
       <span className="min-w-0 truncate text-right text-app">{value}</span>
     </div>
   )
+}
+
+function SessionContext({ session }: { session: DiscoveredSession }) {
+  const messages = session.conversation || []
+  const hasRuntime = session.foreground?.cmd || session.active_commands.length > 0 || session.background_jobs.length > 0
+
+  if (messages.length === 0 && !session.recent_output && !session.last_user_message && !hasRuntime) {
+    return <div className="quiet-panel rounded-2xl p-3 text-sm text-muted">No structured session context is available yet.</div>
+  }
+
+  return (
+    <div className="space-y-3">
+      {messages.length > 0 ? (
+        <div className="quiet-panel max-h-64 space-y-2 overflow-auto rounded-2xl p-3">
+          {messages.slice(-8).map((message, index) => (
+            <div key={`${message.ts || index}-${message.role}`} className="rounded-xl bg-white/45 px-3 py-2 text-sm shadow-sm">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{contextRoleLabel(message.role)}</span>
+                {message.ts && <span className="shrink-0 text-[10px] text-muted">{new Date(message.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+              </div>
+              <div className="whitespace-pre-wrap break-words text-app">{redact(message.text)}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="quiet-panel rounded-2xl p-3 text-sm text-app">
+          {session.last_user_message && <div><span className="text-muted">Last user:</span> {redact(session.last_user_message)}</div>}
+          {session.recent_output && <div className="mt-2"><span className="text-muted">Recent agent:</span> {redact(session.recent_output)}</div>}
+        </div>
+      )}
+
+      <div className="quiet-panel space-y-2 rounded-2xl p-3 text-xs">
+        <RuntimeLine label="Foreground" value={session.foreground?.cmd || session.root_cmd || '-'} />
+        {session.active_commands.slice(0, 4).map(command => (
+          <RuntimeLine key={command} label="Command" value={command} />
+        ))}
+        {session.background_jobs.slice(0, 4).map(job => (
+          <RuntimeLine key={`${job.pid}-${job.cmd}`} label={job.job_type || 'Background'} value={`${job.cmd || `pid ${job.pid}`} · ${job.status || 'running'}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function RuntimeLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[82px_minmax(0,1fr)] gap-2">
+      <span className="text-muted">{label}</span>
+      <span className="truncate mono text-muted-strong" title={value}>{value}</span>
+    </div>
+  )
+}
+
+function contextRoleLabel(role: string): string {
+  if (role === 'user') return 'User'
+  if (role === 'assistant') return 'Agent'
+  if (role === 'tool') return 'Tool'
+  return role || 'Context'
 }
 
 function buildSessionHandoff(session: DiscoveredSession, dirtyFiles: string[]): HandoffData | null {

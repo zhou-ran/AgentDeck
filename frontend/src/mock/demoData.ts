@@ -85,6 +85,10 @@ function session(partial: Partial<DiscoveredSession> & Pick<DiscoveredSession, '
     recent_output: partial.recent_output || '',
     pending_items: partial.pending_items || [],
     last_user_message: partial.last_user_message || '',
+    conversation: partial.conversation || [
+      { role: 'user', text: partial.user_instruction || `Work on ${partial.current_activity}`, ts: Math.floor((now - 12 * 60_000) / 1000), source: 'demo' },
+      { role: 'assistant', text: partial.recent_output || partial.current_activity, ts: Math.floor((now - 4 * 60_000) / 1000), source: 'demo' },
+    ],
     source_file: 'demo',
     confidence: 0.9,
     cpu_percent: partial.cpu_percent ?? 4.2,

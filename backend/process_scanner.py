@@ -15,6 +15,7 @@ from backend.models import (
     ActivityTimelineItem,
     AgentDetectionResult,
     BackgroundJob,
+    ConversationMessage,
     CpuMemSample,
     DiscoveredSession,
     ForegroundAgentInfo,
@@ -70,7 +71,8 @@ INSTRUCTION_LABEL_RE = re.compile(
     re.I,
 )
 
-AUTO_HIDE_INACTIVE_SECONDS = 2 * 60 * 60
+STALE_INACTIVE_SECONDS = 2 * 60 * 60
+AUTO_HIDE_INACTIVE_SECONDS = 6 * 60 * 60
 
 
 def _current_server_user() -> str:
@@ -100,18 +102,31 @@ def _auto_ignore_reason(
     if not _same_user(session.user, server_user):
         return f"other user: {session.user or 'unknown'}"
 
-    if session.heartbeat_age_sec is not None and session.heartbeat_age_sec > AUTO_HIDE_INACTIVE_SECONDS:
-        return "inactive for more than 2 hours"
+    protected = (
+        session.is_pinned
+        or session.status in {"needs_input", "waiting", "waiting_input", "error_hint", "failed"}
+        or bool(session.error_hints)
+        or bool(session.background_jobs)
+        or bool(session.child_processes)
+        or bool(session.active_commands)
+        or bool(recent_files)
+    )
+    if protected:
+        return ""
+
+    inactive_age = session.heartbeat_age_sec
+    if inactive_age is None and session.elapsed_sec:
+        inactive_age = float(session.elapsed_sec)
+
+    if inactive_age is None or inactive_age <= AUTO_HIDE_INACTIVE_SECONDS:
+        return ""
 
     no_recent_work = (
-        session.heartbeat_ts is None
-        and (session.elapsed_sec or 0) > AUTO_HIDE_INACTIVE_SECONDS
-        and session.cpu_percent < 3
-        and not session.active_commands
-        and not recent_files
+        session.cpu_percent < 1
+        and session.memory_percent < 20
     )
     if no_recent_work:
-        return "no visible activity for more than 2 hours"
+        return "no visible activity for more than 6 hours"
 
     return ""
 
@@ -970,6 +985,16 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
                 session.recent_output = redact_sensitive_text(session_data.get("recent_output", ""))
                 session.pending_items = session_data.get("pending_items", [])
                 session.last_user_message = redact_sensitive_text(session_data.get("last_user_message", ""))
+                session.conversation = [
+                    ConversationMessage(
+                        role=str(item.get("role", "unknown")),
+                        text=redact_sensitive_text(str(item.get("text", ""))),
+                        ts=item.get("ts"),
+                        source=str(item.get("source", "session_file")),
+                    )
+                    for item in session_data.get("conversation", [])[:10]
+                    if isinstance(item, dict) and item.get("text")
+                ]
                 session.session_title = session.last_user_message[:80] or None
                 session.display_name = make_display_name(session.session_title, project_name.name, agent_type)
                 if session_data.get("git_branch"):
@@ -1054,6 +1079,14 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
             session.tags.append("ignored")
         session.status_group = status_group_for(session.status, ignored=session.is_ignored)
         session.status_dot = status_dot_for(session.status, session.status_group, has_error=bool(session.error_hints))
+        if (
+            not session.is_ignored
+            and session.heartbeat_age_sec is not None
+            and session.heartbeat_age_sec > STALE_INACTIVE_SECONDS
+            and session.status_group == "idle"
+        ):
+            minutes = int(session.heartbeat_age_sec // 60)
+            session.status_reason = f"No visible activity for {minutes} minutes"
         if session.is_ignored and not include_ignored:
             continue
 

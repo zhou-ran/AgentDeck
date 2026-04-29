@@ -142,6 +142,14 @@ class ActivityTimelineItem(BaseModel):
     detail: str = ""
 
 
+class ConversationMessage(BaseModel):
+    """Bounded session conversation excerpt for UI context."""
+    role: str = "unknown"
+    text: str = ""
+    ts: Optional[float] = None
+    source: str = "session_file"
+
+
 class Task(BaseModel):
     task_id: str
     name: str
@@ -311,6 +319,7 @@ class DiscoveredSession(BaseModel):
     recent_output: str = ""
     pending_items: list[str] = Field(default_factory=list)
     last_user_message: str = ""
+    conversation: list[ConversationMessage] = Field(default_factory=list)
     source_file: str = ""
     confidence: float = 0.0
 

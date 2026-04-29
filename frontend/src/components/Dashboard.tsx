@@ -406,6 +406,7 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
       connected={connected}
       scanMeta={scanMeta}
       onOpenPalette={() => setCommandOpen(true)}
+      demoMode={demoMode}
       sidebarStats={(
         <DashboardStats
           active={liveSessions.length}
@@ -418,24 +419,6 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
       )}
     >
       <div className="space-y-5">
-        <section className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-app">Mission Control</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted">
-              Monitor local coding agents across Codex, Claude, Kimi and more.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-muted backdrop-blur-xl">
-            <StatusDot status={connected ? 'green' : 'red'} pulse={connected} />
-            <span>{connected ? 'Live SSE connected' : 'SSE offline'}</span>
-          </div>
-          {demoMode && (
-            <div className="rounded-full border border-blue-500/15 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300">
-              Demo Mode
-            </div>
-          )}
-        </section>
-
         {activeView === 'settings' ? (
           <SettingsPanel scanMeta={scanMeta} ignoredRules={ignoredRules} onRestoreIgnored={restoreIgnored} />
         ) : activeView === 'logs' ? (
