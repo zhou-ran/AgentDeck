@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Task, DiscoveredSession, ScanMeta, SystemMetrics } from '../types'
 import { getAuthToken } from '../api/client'
 
-export function useSSE() {
+export function useSSE(enabled = true) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [discovered, setDiscovered] = useState<DiscoveredSession[]>([])
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null)
@@ -51,6 +51,7 @@ export function useSSE() {
   }, [])
 
   useEffect(() => {
+    if (!enabled) return
     connect()
     return () => {
       if (retryRef.current !== null) {
@@ -58,7 +59,7 @@ export function useSSE() {
       }
       esRef.current?.close()
     }
-  }, [connect])
+  }, [connect, enabled])
 
   return { tasks, discovered, systemMetrics, scanMeta, connected, error }
 }

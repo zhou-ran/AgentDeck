@@ -1,58 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { DiscoveredSession, Rule, ScanMeta, SessionStatus, SystemMetrics, Task } from '../types'
+import type { DiscoveredSession, Rule, ScanMeta, SystemMetrics, Task } from '../types'
 import { api } from '../api/client'
-import { TaskCard } from './TaskCard'
-import { TaskDetail } from './TaskDetail'
-import { DiscoveredCard } from './DiscoveredCard'
+import { AppShell } from './AppShell'
+import { CommandPalette, type CommandItem } from './CommandPalette'
+import { EmptyState, EmptyStatePanel } from './EmptyState'
+import { LogViewer } from './LogViewer'
+import { ProjectWorktreeView } from './ProjectWorktreeView'
+import { SessionDetailPanel } from './SessionDetailPanel'
+import { SettingsPanel } from './SettingsPanel'
+import { SidebarItem, ViewKey } from './Sidebar'
+import { StatCard } from './StatCard'
+import { StatusDot, statusLabel } from './StatusDot'
 import { SystemOverview } from './SystemOverview'
-
-type TabKey = 'all' | 'pinned' | 'needs_input' | 'working' | 'testing' | 'idle' | 'errors' | 'ignored'
-
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'pinned', label: 'Pinned' },
-  { key: 'needs_input', label: 'Needs Input' },
-  { key: 'working', label: 'Working' },
-  { key: 'testing', label: 'Testing' },
-  { key: 'idle', label: 'Idle' },
-  { key: 'errors', label: 'Errors' },
-  { key: 'ignored', label: 'Ignored' },
-]
-
-const SESSION_STATUSES: SessionStatus[] = [
-  'needs_input',
-  'testing',
-  'editing',
-  'searching',
-  'git_ops',
-  'running_script',
-  'busy',
-  'idle',
-  'stale',
-  'error_hint',
-  'unknown',
-]
-
-const STATUS_LABELS: Record<SessionStatus, string> = {
-  needs_input: 'needs_input',
-  testing: 'testing',
-  editing: 'editing',
-  searching: 'searching',
-  git_ops: 'git_ops',
-  running_script: 'running_script',
-  busy: 'busy',
-  idle: 'idle',
-  stale: 'stale',
-  error_hint: 'error_hint',
-  unknown: 'unknown',
-}
-
-const DOT_CLASS: Record<string, string> = {
-  red: 'bg-red-400',
-  yellow: 'bg-yellow-300',
-  green: 'bg-emerald-400',
-  gray: 'bg-gray-600',
-}
+import { TaskDetailPanel } from './TaskDetailPanel'
+import { TaskList } from './TaskList'
+import { getProjectName } from '../utils/agentIdentity'
+import { formatStatus } from '../utils/status'
 
 function sessionMatchesSearch(session: DiscoveredSession, q: string): boolean {
   const haystack = [
@@ -72,29 +35,37 @@ function sessionMatchesSearch(session: DiscoveredSession, q: string): boolean {
   return haystack.includes(q)
 }
 
-function tabIncludes(tab: TabKey, session: DiscoveredSession): boolean {
-  if (tab === 'ignored') return session.is_ignored
+function projectName(session: DiscoveredSession): string {
+  return session.project_name?.name || session.project || 'Unknown project'
+}
+
+function isFailed(session: DiscoveredSession): boolean {
+  return session.status_group === 'error' || session.status === 'error_hint' || session.status_dot === 'red' || session.error_hints.length > 0
+}
+
+function isWaiting(session: DiscoveredSession): boolean {
+  return session.status_group === 'needs_input' || session.status === 'needs_input' || session.foreground?.waiting_input
+}
+
+function isRunning(session: DiscoveredSession): boolean {
+  return session.status_group === 'working' || ['busy', 'testing', 'editing', 'searching', 'git_ops', 'running_script'].includes(session.status)
+}
+
+function isIdle(session: DiscoveredSession): boolean {
+  return session.status_group === 'idle' || ['idle', 'stale'].includes(session.status)
+}
+
+function tabIncludes(view: ViewKey, session: DiscoveredSession): boolean {
+  if (view === 'ignored') return session.is_ignored
   if (session.is_ignored) return false
-  if (tab === 'all') return true
-  if (tab === 'pinned') return session.is_pinned
-  if (tab === 'needs_input') return session.status_group === 'needs_input'
-  if (tab === 'working') return session.status_group === 'working'
-  if (tab === 'testing') return session.status === 'testing'
-  if (tab === 'idle') return session.status_group === 'idle'
-  if (tab === 'errors') return session.status_group === 'error' || session.error_hints.length > 0
+  if (view === 'overview' || view === 'logs' || view === 'projects' || view === 'agents') return true
+  if (view === 'pinned') return session.is_pinned
+  if (view === 'running') return isRunning(session)
+  if (view === 'waiting') return isWaiting(session)
+  if (view === 'failed') return isFailed(session)
+  if (view === 'completed') return false
+  if (view === 'settings') return false
   return true
-}
-
-function tabDot(sessions: DiscoveredSession[]): string {
-  if (sessions.length === 0) return 'gray'
-  if (sessions.some(s => s.status_dot === 'red')) return 'red'
-  if (sessions.some(s => s.status_dot === 'yellow')) return 'yellow'
-  return 'green'
-}
-
-function fmtScanTime(ts?: number): string {
-  if (!ts) return '-'
-  return new Date(ts * 1000).toLocaleTimeString()
 }
 
 function ruleMatchesSession(rule: Rule, session: DiscoveredSession): boolean {
@@ -106,24 +77,44 @@ function ruleMatchesSession(rule: Rule, session: DiscoveredSession): boolean {
   return false
 }
 
-export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connected }: {
+function sortSessions(sessions: DiscoveredSession[]): DiscoveredSession[] {
+  return [...sessions].sort((a, b) => {
+    if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
+    if (isWaiting(a) !== isWaiting(b)) return isWaiting(a) ? -1 : 1
+    if (isFailed(a) !== isFailed(b)) return isFailed(a) ? -1 : 1
+    return (a.heartbeat_age_sec ?? 999999) - (b.heartbeat_age_sec ?? 999999)
+  })
+}
+
+function completedToday(tasks: Task[]): number {
+  const today = new Date().toDateString()
+  return tasks.filter(task => task.status === 'completed' && task.ended_at && new Date(task.ended_at).toDateString() === today).length
+}
+
+function taskMatchesSearch(task: Task, q: string): boolean {
+  return [task.name, task.project_name, task.project_dir, task.agent_type, task.status, task.current_activity, task.goal]
+    .join(' ')
+    .toLowerCase()
+    .includes(q)
+}
+
+export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connected, demoMode = false }: {
   tasks: Task[]
   discovered: DiscoveredSession[]
   systemMetrics: SystemMetrics | null
   scanMeta: ScanMeta | null
   connected: boolean
+  demoMode?: boolean
 }) {
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [search, setSearch] = useState('')
-  const [agentType, setAgentType] = useState('all')
-  const [statusFilter, setStatusFilter] = useState<SessionStatus | 'all'>('all')
-  const [activeTab, setActiveTab] = useState<TabKey>('all')
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const [showManagedTasks, setShowManagedTasks] = useState(false)
+  const [activeView, setActiveView] = useState<ViewKey>('overview')
   const [allSessions, setAllSessions] = useState<DiscoveredSession[]>(discovered)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [selectedIndex, setSelectedIndex] = useState(0)
   const [pinRules, setPinRules] = useState<Rule[]>([])
   const [ignoredRules, setIgnoredRules] = useState<Rule[]>([])
+  const [commandOpen, setCommandOpen] = useState(false)
 
   useEffect(() => {
     setAllSessions(prev => {
@@ -135,6 +126,7 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
   }, [discovered])
 
   async function refreshRules() {
+    if (demoMode) return
     try {
       const [pins, ignored] = await Promise.all([
         api.listPins(),
@@ -148,6 +140,10 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
   }
 
   async function refreshAllSessions() {
+    if (demoMode) {
+      setAllSessions(discovered)
+      return
+    }
     try {
       const response = await api.discover(true)
       setAllSessions(response.sessions)
@@ -159,241 +155,574 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
 
   useEffect(() => {
     refreshAllSessions()
-    const id = window.setInterval(refreshAllSessions, 10000)
-    return () => window.clearInterval(id)
   }, [])
 
-  const agentTypes = useMemo(() => {
-    return Array.from(new Set(allSessions.map(s => s.agent_type).filter(Boolean))).sort()
+  const projects = useMemo(() => {
+    return Array.from(new Set(allSessions.filter(s => !s.is_ignored).map(projectName))).sort()
   }, [allSessions])
 
-  const tabCounts = useMemo(() => {
-    const entries = new Map<TabKey, DiscoveredSession[]>()
-    for (const tab of TABS) {
-      entries.set(tab.key, allSessions.filter(s => tabIncludes(tab.key, s)))
-    }
-    return entries
+  const agents = useMemo(() => {
+    return Array.from(new Set(allSessions.filter(s => !s.is_ignored).map(s => s.agent_type).filter(Boolean))).sort()
   }, [allSessions])
 
-  const filteredSessions = useMemo(() => {
-    let result = allSessions.filter(s => tabIncludes(activeTab, s))
-    if (agentType !== 'all') result = result.filter(s => s.agent_type === agentType)
-    if (statusFilter !== 'all') result = result.filter(s => s.status === statusFilter)
+  const liveSessions = useMemo(() => allSessions.filter(s => !s.is_ignored), [allSessions])
+  const waitingSessions = useMemo(() => liveSessions.filter(isWaiting), [liveSessions])
+  const failedSessions = useMemo(() => liveSessions.filter(isFailed), [liveSessions])
+  const runningSessions = useMemo(() => liveSessions.filter(isRunning), [liveSessions])
+  const idleSessions = useMemo(() => liveSessions.filter(isIdle), [liveSessions])
+  const pinnedSessions = useMemo(() => liveSessions.filter(s => s.is_pinned), [liveSessions])
+
+  const sidebarItems: SidebarItem[] = [
+    { key: 'overview', label: 'Overview', count: liveSessions.length, status: connected ? 'green' : 'red' },
+    { key: 'running', label: 'Running', count: runningSessions.length, status: 'green' },
+    { key: 'waiting', label: 'Waiting', count: waitingSessions.length, status: 'orange' },
+    { key: 'completed', label: 'Completed', count: tasks.filter(t => t.status === 'completed').length, status: 'blue' },
+    { key: 'failed', label: 'Failed', count: failedSessions.length + tasks.filter(t => t.status === 'failed').length, status: 'red' },
+    { key: 'pinned', label: 'Pinned', count: Math.max(pinnedSessions.length, pinRules.length), status: 'yellow' },
+    { key: 'projects', label: 'Projects', count: projects.length, status: 'blue' },
+    { key: 'agents', label: 'Agents', count: agents.length, status: 'green' },
+    { key: 'logs', label: 'Logs', count: liveSessions.filter(s => s.recent_logs?.length > 0).length, status: 'gray' },
+    { key: 'settings', label: 'Settings', status: 'gray' },
+    { key: 'ignored', label: 'Ignored', count: ignoredRules.filter(r => r.active).length, status: 'gray' },
+  ]
+
+  const visibleSessions = useMemo(() => {
+    let result = allSessions.filter(s => tabIncludes(activeView, s))
     if (search.trim()) result = result.filter(s => sessionMatchesSearch(s, search.toLowerCase()))
-    return result.sort((a, b) => {
-      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
-      return (a.heartbeat_age_sec ?? 999999) - (b.heartbeat_age_sec ?? 999999)
-    })
-  }, [allSessions, activeTab, agentType, statusFilter, search])
+    return sortSessions(result)
+  }, [allSessions, activeView, search])
+
+  const focusSessions = useMemo(() => {
+    return sortSessions(liveSessions.filter(session => session.is_pinned || isWaiting(session) || isFailed(session) || (session.heartbeat_age_sec ?? 0) > 900))
+  }, [liveSessions])
+
+  const backgroundSessions = useMemo(() => {
+    const focusIds = new Set(focusSessions.map(s => s.session_id))
+    return sortSessions(liveSessions.filter(session => !focusIds.has(session.session_id) && (isRunning(session) || isIdle(session))))
+  }, [liveSessions, focusSessions])
+
+  const searchedManagedTasks = useMemo(() => {
+    let result = tasks
+    if (activeView === 'running') result = result.filter(task => ['running', 'busy', 'testing', 'editing', 'searching', 'git_ops', 'running_script'].includes(task.status))
+    if (activeView === 'waiting') result = result.filter(task => task.status === 'needs_input' || task.status === 'waiting_input' || task.status === 'waiting')
+    if (activeView === 'completed') result = result.filter(task => task.status === 'completed')
+    if (activeView === 'failed') result = result.filter(task => task.status === 'failed' || task.has_error_hint)
+    if (activeView === 'pinned' || activeView === 'ignored' || activeView === 'projects' || activeView === 'agents' || activeView === 'logs' || activeView === 'settings') result = []
+    if (!search.trim()) return result
+    return result.filter(task => taskMatchesSearch(task, search.toLowerCase()))
+  }, [tasks, search, activeView])
+
+  const selectedSession = useMemo(() => {
+    return allSessions.find(session => session.session_id === selectedSessionId) || visibleSessions[0] || null
+  }, [allSessions, selectedSessionId, visibleSessions])
 
   const unmatchedPinRules = useMemo(() => {
     return pinRules.filter(rule => !allSessions.some(session => ruleMatchesSession(rule, session)))
   }, [pinRules, allSessions])
 
   useEffect(() => {
-    setSelectedIndex(index => Math.min(index, Math.max(filteredSessions.length - 1, 0)))
-  }, [filteredSessions.length])
+    setSelectedIndex(index => Math.min(index, Math.max(visibleSessions.length - 1, 0)))
+  }, [visibleSessions.length])
 
   async function handleSessionAction(session: DiscoveredSession, action: 'pin' | 'ignore') {
+    if (demoMode) {
+      setAllSessions(prev => prev.map(item => {
+        if (item.session_id !== session.session_id) return item
+        if (action === 'pin') return { ...item, is_pinned: !item.is_pinned }
+        return { ...item, is_ignored: !item.is_ignored }
+      }))
+      return
+    }
     if (action === 'pin') {
       if (session.is_pinned) await api.unpinSession(session.session_id)
       else await api.pinSession(session.session_id)
+    } else if (session.is_ignored) {
+      await api.unignoreSession(session.session_id)
     } else {
-      if (session.is_ignored) await api.unignoreSession(session.session_id)
-      else await api.ignoreSession(session.session_id)
+      await api.ignoreSession(session.session_id)
     }
     await refreshAllSessions()
   }
 
   async function restoreIgnored(rule: Rule) {
+    if (demoMode) return
     await api.restoreIgnored(rule.id)
     await refreshAllSessions()
   }
 
+  function selectSession(session: DiscoveredSession) {
+    setSelectedTask(null)
+    setSelectedSessionId(session.session_id)
+  }
+
+  const commands = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [
+      { id: 'nav-overview', group: 'Navigation', title: 'Open Overview', shortcut: 'G O', action: () => setActiveView('overview') },
+      { id: 'nav-logs', group: 'Navigation', title: 'Open Logs', shortcut: 'L', action: () => setActiveView('logs') },
+      { id: 'nav-settings', group: 'Navigation', title: 'Open Settings', action: () => setActiveView('settings') },
+      { id: 'filter-running', group: 'Filters', title: 'Filter running tasks', shortcut: 'R', action: () => setActiveView('running') },
+      { id: 'filter-waiting', group: 'Filters', title: 'Filter waiting input tasks', action: () => setActiveView('waiting') },
+      { id: 'filter-failed', group: 'Filters', title: 'Filter failed tasks', shortcut: 'F', action: () => setActiveView('failed') },
+      { id: 'action-refresh', group: 'Actions', title: 'Refresh discovery', shortcut: 'R', action: refreshAllSessions },
+      { id: 'action-generate-handoff', group: 'Actions', title: 'Generate handoff', subtitle: 'Open task detail and use the safe handoff copy action.', disabled: !selectedSession, action: () => selectedSession && selectSession(selectedSession) },
+    ]
+
+    for (const session of allSessions.filter(s => !s.is_ignored).slice(0, 80)) {
+      const path = session.cwd || session.project_root || ''
+      items.push({
+        id: `task-open-${session.session_id}`,
+        group: 'Tasks',
+        title: `Open ${session.display_name || getProjectName(session)}`,
+        subtitle: `${session.agent_type || 'Agent'} · ${getProjectName(session)} · ${formatStatus(session.status)}`,
+        keywords: [session.cwd, session.short_cwd, session.agent_type, session.status, session.current_activity],
+        action: () => {
+          selectSession(session)
+          setActiveView('overview')
+        },
+      })
+      items.push({
+        id: `task-pin-${session.session_id}`,
+        group: 'Tasks',
+        title: `${session.is_pinned ? 'Unpin' : 'Pin'} ${session.display_name || getProjectName(session)}`,
+        subtitle: 'Visibility rule only. Process is untouched.',
+        keywords: ['pin', 'pinned', session.agent_type, getProjectName(session)],
+        action: () => handleSessionAction(session, 'pin'),
+      })
+      items.push({
+        id: `task-ignore-${session.session_id}`,
+        group: 'Tasks',
+        title: `${session.is_ignored ? 'Restore' : 'Ignore'} ${session.display_name || getProjectName(session)}`,
+        subtitle: 'Hide only. Does not stop the process.',
+        keywords: ['ignore', 'hide', 'restore', session.agent_type],
+        action: () => handleSessionAction(session, 'ignore'),
+      })
+      if (path) {
+        items.push({
+          id: `task-copy-path-${session.session_id}`,
+          group: 'Tasks',
+          title: `Copy path for ${getProjectName(session)}`,
+          subtitle: path,
+          keywords: ['copy', 'path', 'project', session.short_cwd, session.cwd],
+          action: () => navigator.clipboard.writeText(path),
+        })
+      }
+    }
+
+    for (const project of projects) {
+      items.push({
+        id: `project-${project}`,
+        group: 'Projects',
+        title: `Open project ${project}`,
+        subtitle: 'Show Project Worktree View',
+        keywords: [project],
+        action: () => {
+          setSearch(project)
+          setActiveView('projects')
+        },
+      })
+    }
+
+    for (const agent of agents) {
+      items.push({
+        id: `agent-${agent}`,
+        group: 'Agents',
+        title: `Show ${formatStatus(agent)} sessions`,
+        subtitle: 'Filter by agent type',
+        keywords: [agent],
+        action: () => {
+          setSearch(agent)
+          setActiveView('agents')
+        },
+      })
+    }
+
+    return items
+  }, [allSessions, projects, agents, selectedSession])
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
-      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'SELECT' || target?.tagName === 'TEXTAREA'
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'SELECT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandOpen(true)
+        return
+      }
       if (isTyping && event.key !== 'Escape') return
 
       if (event.key === 'j' || event.key === 'ArrowDown') {
         event.preventDefault()
-        setSelectedIndex(i => Math.min(i + 1, Math.max(filteredSessions.length - 1, 0)))
+        setSelectedIndex(i => Math.min(i + 1, Math.max(visibleSessions.length - 1, 0)))
       } else if (event.key === 'k' || event.key === 'ArrowUp') {
         event.preventDefault()
         setSelectedIndex(i => Math.max(i - 1, 0))
       } else if (event.key === 'Enter') {
-        const current = filteredSessions[selectedIndex]
-        if (current) setExpandedId(id => id === current.session_id ? null : current.session_id)
+        const current = visibleSessions[selectedIndex]
+        if (current) selectSession(current)
       } else if (event.key === '/') {
         event.preventDefault()
         document.getElementById('session-filter')?.focus()
       } else if (event.key === 'Escape') {
-        setExpandedId(null)
-        ;(document.activeElement as HTMLElement | null)?.blur()
-      } else if (/^[1-8]$/.test(event.key)) {
-        setActiveTab(TABS[Number(event.key) - 1].key)
-      } else if (event.key === 'r') {
+        if (commandOpen) setCommandOpen(false)
+        setSelectedTask(null)
+      } else if (event.key.toLowerCase() === 'r') {
         refreshAllSessions()
-      } else if (event.key === 'p' || event.key === 'i') {
-        const current = filteredSessions[selectedIndex]
-        if (current) handleSessionAction(current, event.key === 'p' ? 'pin' : 'ignore')
+      } else if (event.key.toLowerCase() === 'l') {
+        setActiveView('logs')
+      } else if (event.key.toLowerCase() === 'f') {
+        setActiveView('failed')
+      } else if (event.key.toLowerCase() === 'p') {
+        const current = visibleSessions[selectedIndex]
+        if (current) handleSessionAction(current, 'pin')
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [filteredSessions, selectedIndex])
+  }, [visibleSessions, selectedIndex, commandOpen])
 
-  const liveCount = allSessions.filter(s => !s.is_ignored).length
+  const selectedTaskLive = selectedTask ? tasks.find(t => t.task_id === selectedTask.task_id) || selectedTask : null
 
-  if (selectedTask) {
-    const current = tasks.find(t => t.task_id === selectedTask.task_id) || selectedTask
-    return <TaskDetail task={current} onBack={() => setSelectedTask(null)} />
+  return (
+    <AppShell
+      activeView={activeView}
+      onViewChange={view => {
+        setActiveView(view)
+        setSelectedTask(null)
+      }}
+      sidebarItems={sidebarItems}
+      projects={projects}
+      agents={agents}
+      search={search}
+      onSearch={setSearch}
+      onRefresh={refreshAllSessions}
+      connected={connected}
+      scanMeta={scanMeta}
+      onOpenPalette={() => setCommandOpen(true)}
+    >
+      <div className="space-y-5">
+        <section className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-app">Mission Control</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted">
+              Monitor local coding agents across Codex, Claude, Kimi and more.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-muted backdrop-blur-xl">
+            <StatusDot status={connected ? 'green' : 'red'} pulse={connected} />
+            <span>{connected ? 'Live SSE connected' : 'SSE offline'}</span>
+          </div>
+          {demoMode && (
+            <div className="rounded-full border border-blue-500/15 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300">
+              Demo Mode
+            </div>
+          )}
+        </section>
+
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <StatCard label="Active" value={liveSessions.length} detail={`${runningSessions.length} running`} status="green" />
+          <StatCard label="Needs Input" value={waitingSessions.length} detail="Waiting for you" status="orange" />
+          <StatCard label="Idle" value={idleSessions.length} detail="No immediate action" status="yellow" />
+          <StatCard label="Failed" value={failedSessions.length} detail="Review recommended" status="red" />
+          <StatCard label="Done Today" value={completedToday(tasks)} detail="Managed tasks" status="blue" />
+        </section>
+
+        {activeView === 'settings' ? (
+          <SettingsPanel scanMeta={scanMeta} ignoredRules={ignoredRules} onRestoreIgnored={restoreIgnored} />
+        ) : activeView === 'logs' ? (
+          <LogsView sessions={visibleSessions} />
+        ) : activeView === 'projects' ? (
+          <ProjectWorktreeView sessions={visibleSessions} onSelect={session => {
+            selectSession(session)
+            setActiveView('overview')
+          }} />
+        ) : activeView === 'agents' ? (
+          <AgentsView sessions={visibleSessions} onSelect={session => {
+            selectSession(session)
+            setActiveView('overview')
+          }} />
+        ) : (
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div className="space-y-5">
+              {activeView === 'overview' ? (
+                <>
+                  <TaskList
+                    title="Focus Now"
+                    description="Pinned, failed, waiting, and stale sessions that deserve attention."
+                    sessions={search.trim() ? visibleSessions : focusSessions}
+                    selectedSessionId={selectedSession?.session_id || null}
+                    onSelect={selectSession}
+                    onAction={handleSessionAction}
+                    emptyTitle={search.trim() ? 'No results found' : 'Nothing needs your attention'}
+                    emptyDescription={search.trim() ? 'Try searching by task, project, agent, or status.' : 'Waiting input, failed, pinned, and stale sessions will appear here.'}
+                  />
+                  {!search.trim() && (
+                    <TaskList
+                      title="Running in Background"
+                      description="Agents that are working or idle without immediate user action."
+                      sessions={backgroundSessions}
+                      selectedSessionId={selectedSession?.session_id || null}
+                      onSelect={selectSession}
+                      onAction={handleSessionAction}
+                      emptyTitle="No background agents"
+                      emptyDescription="Long-running and idle sessions will show up here."
+                    />
+                  )}
+                </>
+              ) : activeView === 'ignored' ? (
+                <IgnoredView rules={ignoredRules} sessions={visibleSessions} onRestore={restoreIgnored} onSelect={selectSession} onAction={handleSessionAction} />
+              ) : activeView === 'pinned' && unmatchedPinRules.length > 0 ? (
+                <>
+                  <UnmatchedPins rules={unmatchedPinRules} />
+                  <TaskList
+                    title="Pinned Sessions"
+                    description="Live sessions matching pinned rules."
+                    sessions={visibleSessions}
+                    selectedSessionId={selectedSession?.session_id || null}
+                    onSelect={selectSession}
+                    onAction={handleSessionAction}
+                    emptyTitle="No pinned sessions"
+                    emptyDescription="Pinned sessions and matching rules will stay easy to reach."
+                  />
+                </>
+              ) : (
+                <TaskList
+                  title={sidebarItems.find(item => item.key === activeView)?.label || 'Sessions'}
+                  description="Compact view of live local agent sessions."
+                  sessions={visibleSessions}
+                  selectedSessionId={selectedSession?.session_id || null}
+                  onSelect={selectSession}
+                  onAction={handleSessionAction}
+                  emptyTitle={search.trim() ? 'No results found' : 'No active agents'}
+                  emptyDescription={search.trim() ? 'Try searching by task, project, agent, or status.' : 'Start a task from your terminal and it will appear here automatically.'}
+                />
+              )}
+
+              {searchedManagedTasks.length > 0 && activeView !== 'ignored' && (
+                <ManagedTasks tasks={searchedManagedTasks} selectedTaskId={selectedTaskLive?.task_id || null} onSelect={task => setSelectedTask(task)} />
+              )}
+
+              {systemMetrics && <SystemOverview metrics={systemMetrics} />}
+            </div>
+
+            <div className="hidden xl:block">
+              {selectedTaskLive ? (
+                <TaskDetailPanel task={selectedTaskLive} onClose={() => setSelectedTask(null)} />
+              ) : (
+                <SessionDetailPanel session={selectedSession} onClose={() => setSelectedSessionId(null)} onAction={handleSessionAction} />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />
+    </AppShell>
+  )
+}
+
+function ManagedTasks({ tasks, selectedTaskId, onSelect }: { tasks: Task[]; selectedTaskId: string | null; onSelect: (task: Task) => void }) {
+  return (
+    <section className="glass-panel-strong overflow-hidden rounded-[22px]">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-app">Managed Tasks</h2>
+          <p className="mt-0.5 text-xs text-muted">CLI-created tasks with plans, notes, handoff, and logs.</p>
+        </div>
+        <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-xs text-muted dark:bg-white/[0.08]">{tasks.length}</span>
+      </div>
+      <div className="divide-y divide-[var(--border)]">
+        {tasks.map(task => (
+          <button
+            key={task.task_id}
+            type="button"
+            onClick={() => onSelect(task)}
+            className={`grid w-full items-center gap-3 px-4 py-3 text-left text-sm transition md:grid-cols-[16px_minmax(180px,1.2fr)_minmax(180px,1fr)_110px_110px] ${
+              selectedTaskId === task.task_id ? 'bg-blue-500/[0.09]' : 'hover:bg-black/[0.035] dark:hover:bg-white/[0.055]'
+            }`}
+          >
+            <StatusDot status={task.status} pulse={task.status === 'running' || task.status === 'busy'} />
+            <div className="min-w-0">
+              <div className="truncate font-medium text-app">{task.name}</div>
+              <div className="mt-0.5 truncate text-xs text-muted">{task.goal || task.command}</div>
+            </div>
+            <div className="hidden truncate text-muted-strong md:block">{task.project_name || task.short_cwd || task.project_dir}</div>
+            <div className="hidden text-xs text-muted md:block">{statusLabel(task.status)}</div>
+            <div className="hidden text-xs text-muted md:block">{task.agent_type || 'Unknown'}</div>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function LogsView({ sessions }: { sessions: DiscoveredSession[] }) {
+  const lines = sessions.flatMap(session => {
+    const label = `[${session.agent_type || 'agent'}:${projectName(session)}]`
+    return (session.recent_logs || []).slice(-20).map(line => `${label} ${line}`)
+  })
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="glass-panel-strong rounded-[22px] p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-app">Live Logs</h2>
+            <p className="mt-0.5 text-xs text-muted">Apple Console-style tail from visible sessions.</p>
+          </div>
+          <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-xs text-muted dark:bg-white/[0.08]">{lines.length} lines</span>
+        </div>
+        <LogViewer lines={lines} height="620px" />
+      </section>
+      <SystemOverview metrics={null} />
+    </div>
+  )
+}
+
+function ProjectsView({ sessions, onSelect }: { sessions: DiscoveredSession[]; onSelect: (session: DiscoveredSession) => void }) {
+  const groups = new Map<string, DiscoveredSession[]>()
+  for (const session of sessions) {
+    const key = projectName(session)
+    groups.set(key, [...(groups.get(key) || []), session])
+  }
+
+  if (groups.size === 0) {
+    return <EmptyStatePanel title="No projects" description="Projects appear once local agent sessions are discovered." />
   }
 
   return (
-    <div>
-      <SystemOverview metrics={systemMetrics} />
-
-      <div className="mb-4 border border-gray-800 bg-[#080b10] px-3 py-2 font-mono text-xs text-gray-400">
-        <span className="text-cyan-300">[LOCAL]</span> agentdeck :: host={scanMeta?.hostname || 'unknown'} :: scan={scanMeta?.scan_interval ?? 2}s :: last={fmtScanTime(scanMeta?.last_scan_time)} :: sessions={scanMeta?.active_sessions_count ?? liveCount} :: {connected ? 'connected' : 'offline'}
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-1 font-mono text-xs">
-        {TABS.map((tab, index) => {
-          const sessions = tabCounts.get(tab.key) || []
-          const active = activeTab === tab.key
-          const dot = tabDot(sessions)
-          const count = tab.key === 'ignored' ? ignoredRules.filter(r => r.active).length : tab.key === 'pinned' ? Math.max(sessions.length, pinRules.length) : sessions.length
-          return (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`border px-2 py-1 ${active ? 'border-cyan-600 bg-gray-900 text-cyan-200' : 'border-gray-800 bg-[#080b10] text-gray-400 hover:border-gray-600'}`}
-            >
-              <span className={`mr-1 inline-block h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
-              {index + 1}:{tab.label} {count}
-            </button>
-          )
-        })}
-      </div>
-
-      <div className="mb-4 grid gap-2 border border-gray-800 bg-[#080b10] p-3 md:grid-cols-[1fr_auto_auto]">
-        <input
-          id="session-filter"
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="/ filter: precancer codex testing"
-          className="border border-gray-800 bg-gray-950 px-3 py-1.5 font-mono text-xs text-gray-200 outline-none placeholder-gray-600 focus:border-cyan-700"
-        />
-        <select
-          value={agentType}
-          onChange={e => setAgentType(e.target.value)}
-          className="border border-gray-800 bg-gray-950 px-2 py-1.5 font-mono text-xs text-gray-200 outline-none focus:border-cyan-700"
-        >
-          <option value="all">agent:all</option>
-          {agentTypes.map(type => <option key={type} value={type}>{type}</option>)}
-        </select>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as SessionStatus | 'all')}
-          className="border border-gray-800 bg-gray-950 px-2 py-1.5 font-mono text-xs text-gray-200 outline-none focus:border-cyan-700"
-        >
-          <option value="all">status:all</option>
-          {SESSION_STATUSES.map(status => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
-        </select>
-      </div>
-
-      {activeTab === 'ignored' && (
-        <div className="mb-4 border border-gray-800 bg-[#080b10] font-mono text-xs">
-          <div className="border-b border-gray-800 px-3 py-2 text-gray-500">Ignored Rules: hide only; no kill, no log deletion, no project deletion.</div>
-          <div className="overflow-auto">
-            <table className="w-full text-left">
-              <thead className="text-gray-600">
-                <tr>
-                  <th className="px-3 py-2">Type</th>
-                  <th className="px-3 py-2">Value</th>
-                  <th className="px-3 py-2">Note</th>
-                  <th className="px-3 py-2">Created</th>
-                  <th className="px-3 py-2">State</th>
-                  <th className="px-3 py-2">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ignoredRules.map(rule => (
-                  <tr key={rule.id} className="border-t border-gray-900 text-gray-400">
-                    <td className="px-3 py-2">{rule.type}</td>
-                    <td className="max-w-[360px] break-all px-3 py-2">{rule.value}</td>
-                    <td className="px-3 py-2">{rule.note || '-'}</td>
-                    <td className="px-3 py-2">{rule.created_at}</td>
-                    <td className="px-3 py-2">{rule.active ? 'active' : 'restored'}</td>
-                    <td className="px-3 py-2">
-                      {rule.active && (
-                        <button onClick={() => restoreIgnored(rule)} className="border border-gray-700 px-2 py-1 text-gray-300 hover:border-cyan-700">
-                          restore
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {ignoredRules.length === 0 && (
-                  <tr><td colSpan={6} className="px-3 py-6 text-gray-600">&gt; no ignored rules</td></tr>
-                )}
-              </tbody>
-            </table>
+    <div className="space-y-4">
+      {Array.from(groups.entries()).map(([project, items]) => (
+        <section key={project} className="glass-panel-strong overflow-hidden rounded-[22px]">
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-app">{project}</h2>
+              <p className="mt-0.5 text-xs text-muted">{items.length} live session{items.length === 1 ? '' : 's'}</p>
+            </div>
+            <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-xs text-muted dark:bg-white/[0.08]">
+              {items.filter(isFailed).length} failed
+            </span>
           </div>
-        </div>
-      )}
-
-      {activeTab === 'pinned' && unmatchedPinRules.length > 0 && (
-        <div className="mb-4 border border-gray-800 bg-[#080b10] p-3 font-mono text-xs text-gray-500">
-          <div className="mb-2 text-gray-400">Pinned rules without live matching sessions</div>
-          {unmatchedPinRules.map(rule => (
-            <div key={rule.id} className="grid gap-1 border-t border-gray-900 py-2 md:grid-cols-[100px_1fr_160px]">
-              <span>{rule.type}</span>
-              <span className="break-all">{rule.value}</span>
-              <span>{rule.note || rule.created_at}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {filteredSessions.length === 0 ? (
-        <div className="border border-gray-800 bg-[#080b10] p-8 font-mono text-sm text-gray-500">
-          <div>&gt; no live agent sessions detected</div>
-          <div>&gt; start codex/claude/kimi-code or check scanner patterns</div>
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {filteredSessions.map((session, index) => (
-            <DiscoveredCard
-              key={session.session_id}
-              session={session}
-              expanded={expandedId === session.session_id}
-              selected={index === selectedIndex}
-              onToggle={() => {
-                setSelectedIndex(index)
-                setExpandedId(id => id === session.session_id ? null : session.session_id)
-              }}
-              onAction={action => handleSessionAction(session, action)}
-            />
-          ))}
-        </div>
-      )}
-
-      {tasks.length > 0 && (
-        <div className="mt-6 border-t border-gray-800 pt-4">
-          <button onClick={() => setShowManagedTasks(!showManagedTasks)} className="font-mono text-xs text-gray-500 hover:text-gray-300">
-            {showManagedTasks ? 'hide managed tasks' : `managed tasks (${tasks.length})`}
-          </button>
-          {showManagedTasks && (
-            <div className="mt-3 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {tasks.map(t => <TaskCard key={t.task_id} task={t} onClick={() => setSelectedTask(t)} />)}
-            </div>
-          )}
-        </div>
-      )}
+          <div className="divide-y divide-[var(--border)]">
+            {items.map(session => (
+              <button key={session.session_id} type="button" onClick={() => onSelect(session)} className="grid w-full gap-3 px-4 py-3 text-left text-sm transition hover:bg-black/[0.035] dark:hover:bg-white/[0.055] md:grid-cols-[16px_160px_minmax(180px,1fr)_120px]">
+                <StatusDot status={session.status_dot || session.status} />
+                <span className="truncate text-app">{session.git_status_detail?.branch || session.project_status?.branch || 'Unknown branch'}</span>
+                <span className="truncate mono text-xs text-muted">{session.short_cwd || session.cwd}</span>
+                <span className="text-muted">{statusLabel(session.status)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
+  )
+}
+
+function AgentsView({ sessions, onSelect }: { sessions: DiscoveredSession[]; onSelect: (session: DiscoveredSession) => void }) {
+  const groups = new Map<string, DiscoveredSession[]>()
+  for (const session of sessions) {
+    const key = session.agent_type || 'unknown'
+    groups.set(key, [...(groups.get(key) || []), session])
+  }
+
+  if (groups.size === 0) {
+    return <EmptyStatePanel title="No agents detected" description="Start Codex, Claude, Kimi, Aider, or another supported tool to see it here." />
+  }
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {Array.from(groups.entries()).map(([agent, items]) => (
+        <section key={agent} className="glass-panel-strong overflow-hidden rounded-[22px]">
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <h2 className="text-sm font-semibold text-app">{statusLabel(agent)}</h2>
+            <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-xs text-muted dark:bg-white/[0.08]">{items.length}</span>
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {items.map(session => (
+              <button key={session.session_id} type="button" onClick={() => onSelect(session)} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition hover:bg-black/[0.035] dark:hover:bg-white/[0.055]">
+                <StatusDot status={session.status_dot || session.status} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium text-app">{projectName(session)}</div>
+                  <div className="truncate text-xs text-muted">{session.current_activity || session.short_cwd || session.cwd}</div>
+                </div>
+                <span className="text-xs text-muted">{statusLabel(session.status)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function IgnoredView({
+  rules,
+  sessions,
+  onRestore,
+  onSelect,
+  onAction,
+}: {
+  rules: Rule[]
+  sessions: DiscoveredSession[]
+  onRestore: (rule: Rule) => void
+  onSelect: (session: DiscoveredSession) => void
+  onAction: (session: DiscoveredSession, action: 'pin' | 'ignore') => void
+}) {
+  return (
+    <div className="space-y-5">
+      <TaskList
+        title="Ignored Sessions"
+        description="Hidden only. Processes, logs, and project files are untouched."
+        sessions={sessions}
+        selectedSessionId={null}
+        onSelect={onSelect}
+        onAction={onAction}
+        emptyTitle="No ignored sessions"
+        emptyDescription="Sessions you hide from the main dashboard appear here."
+      />
+      <section className="glass-panel-strong overflow-hidden rounded-[22px]">
+        <div className="px-4 py-3">
+          <h2 className="text-sm font-semibold text-app">Ignored Rules</h2>
+          <p className="mt-0.5 text-xs text-muted">Restoring a rule only changes visibility.</p>
+        </div>
+        {rules.length === 0 ? (
+          <EmptyState title="No ignored rules" description="Hide rules are created when you ignore a session." />
+        ) : (
+          <div className="divide-y divide-[var(--border)]">
+            {rules.map(rule => (
+              <div key={rule.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[130px_minmax(0,1fr)_110px]">
+                <span className="text-muted">{rule.type}</span>
+                <span className="break-all mono text-xs text-app">{rule.value}</span>
+                <div className="text-right">
+                  {rule.active ? (
+                    <button type="button" onClick={() => onRestore(rule)} className="rounded-full border border-[var(--border)] px-3 py-1 text-xs text-app transition hover:bg-black/5 dark:hover:bg-white/10">
+                      Restore
+                    </button>
+                  ) : (
+                    <span className="text-xs text-muted">Restored</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function UnmatchedPins({ rules }: { rules: Rule[] }) {
+  return (
+    <section className="glass-panel-strong rounded-[22px] p-4">
+      <h2 className="text-sm font-semibold text-app">Pinned Rules Without Live Sessions</h2>
+      <div className="mt-3 space-y-2">
+        {rules.map(rule => (
+          <div key={rule.id} className="grid gap-2 rounded-2xl bg-black/[0.03] px-3 py-2 text-xs dark:bg-white/[0.04] md:grid-cols-[120px_1fr_160px]">
+            <span className="text-muted">{rule.type}</span>
+            <span className="break-all mono text-app">{rule.value}</span>
+            <span className="text-muted">{rule.note || rule.created_at}</span>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }

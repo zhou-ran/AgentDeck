@@ -18,10 +18,10 @@ function linesFor(proc: ProcessInfo, prefix = '', isLast = true, isRoot = true):
 
 export function ProcessTree({ tree }: { tree: ProcessInfo | null }) {
   if (!tree) {
-    return <pre className="border border-gray-800 bg-gray-950 p-3 font-mono text-xs text-gray-600">no process tree available</pre>
+    return <pre className="mono rounded-2xl border border-[var(--border)] bg-black/[0.035] p-3 text-xs text-muted dark:bg-white/[0.055]">No process tree available</pre>
   }
   return (
-    <pre className="overflow-auto border border-gray-800 bg-gray-950 p-3 font-mono text-xs leading-relaxed text-gray-400">
+    <pre className="mono overflow-auto rounded-2xl border border-[var(--border)] bg-black/[0.035] p-3 text-xs leading-relaxed text-muted-strong dark:bg-white/[0.055]">
       {linesFor(tree).join('\n')}
     </pre>
   )

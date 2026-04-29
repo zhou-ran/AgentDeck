@@ -9,6 +9,7 @@ from collections import namedtuple
 from backend.models import ProcessInfo
 from backend.process_scanner import (
     discover_agent_processes,
+    discover_sessions,
     get_system_metrics,
     is_process_alive,
     _format_elapsed,
@@ -94,3 +95,30 @@ class TestDiscoverAgentProcesses:
         results = discover_agent_processes()
 
         assert [p.pid for p in results] == [10]
+
+    def test_same_cwd_agents_are_separate_sessions(self, tmp_path, monkeypatch):
+        cwd = str(tmp_path)
+        codex = ProcessInfo(
+            pid=10,
+            ppid=1,
+            name="node",
+            cmdline=["node", "/usr/bin/codex"],
+            cwd=cwd,
+            create_time=1000,
+        )
+        kimi = ProcessInfo(
+            pid=20,
+            ppid=1,
+            name="Kimi Code",
+            cmdline=["Kimi Code", ""],
+            cwd=cwd,
+            create_time=1001,
+        )
+
+        monkeypatch.setattr("backend.process_scanner.discover_agent_processes", lambda: [codex, kimi])
+
+        sessions = discover_sessions()
+
+        assert len(sessions) == 2
+        assert {s.agent_type for s in sessions} == {"codex", "kimi-code"}
+        assert len({s.session_id for s in sessions}) == 2
