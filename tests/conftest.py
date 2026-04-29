@@ -1,4 +1,4 @@
-"""Shared fixtures for AgentStatus tests."""
+"""Shared fixtures for AgentDeck tests."""
 
 from __future__ import annotations
 

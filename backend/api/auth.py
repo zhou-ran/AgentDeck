@@ -1,4 +1,4 @@
-"""Authentication middleware for AgentStatus.
+"""Authentication middleware for AgentDeck.
 
 Skip auth for localhost (127.0.0.1 / ::1 / localhost).
 For LAN access, require Bearer token.

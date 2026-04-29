@@ -49,7 +49,7 @@ from backend.security import is_safe_project_dir
 
 @click.group()
 def cli():
-    """agent-foreman-local — Manage and monitor coding agent tasks."""
+    """agentdeck — Manage and monitor coding agent tasks."""
     pass
 
 
@@ -65,7 +65,7 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     """Start a new agent task.
 
     Example:
-      agent-foreman-local start my-training --dir /data/proj --goal "Train model" -- python train.py --epochs 10
+      agentdeck start my-training --dir /data/proj --goal "Train model" -- python train.py --epochs 10
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
@@ -126,7 +126,7 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     click.echo(f"  Dir:     {project_dir}")
     click.echo(f"  Goal:    {goal or '(not specified)'}")
     click.echo(f"  Log:     {log_path}")
-    click.echo(f"\nUse 'agent-foreman-local tail {task_id}' to watch output")
+    click.echo(f"\nUse 'agentdeck tail {task_id}' to watch output")
 
 
 @cli.command()
@@ -140,7 +140,7 @@ def init(name: str, project_dir: str, goal: str, feature: str, criteria: tuple[s
     """Initialize a new task with goal and acceptance criteria (no command yet).
 
     Example:
-      agent-foreman-local init my-task --dir /data/proj --goal "Implement auth" --criteria "Tests pass" --criteria "No lint errors"
+      agentdeck init my-task --dir /data/proj --goal "Implement auth" --criteria "Tests pass" --criteria "No lint errors"
     """
     task_id = name
     project_dir = os.path.abspath(project_dir)
@@ -172,7 +172,7 @@ def init(name: str, project_dir: str, goal: str, feature: str, criteria: tuple[s
         click.echo(f"  Criteria:")
         for c in criteria:
             click.echo(f"    - {c}")
-    click.echo(f"\nUse 'agent-foreman-local set-plan {task_id} plan.md' to import a plan")
+    click.echo(f"\nUse 'agentdeck set-plan {task_id} plan.md' to import a plan")
 
 
 @cli.command(name="set-plan")
@@ -242,7 +242,7 @@ def add_note(task_id: str, note_text: str, step_id: str | None):
     """Add a progress note to a task.
 
     Example:
-      agent-foreman-local note my-task "Completed API endpoint implementation"
+      agentdeck note my-task "Completed API endpoint implementation"
     """
     task = add_progress_note(task_id, note_text, step_id)
     if not task:
@@ -262,7 +262,7 @@ def update_step_cmd(task_id: str, step_id: str, step_status: str, notes: str):
     """Update the status of a plan step.
 
     Example:
-      agent-foreman-local step my-task 1 --status done --notes "Implemented and tested"
+      agentdeck step my-task 1 --status done --notes "Implemented and tested"
     """
     status_enum = StepStatus(step_status)
     task = update_step(task_id, step_id, status_enum, notes)
@@ -280,7 +280,7 @@ def complete_cmd(task_id: str, summary: str):
     """Mark a task as completed with a summary.
 
     Example:
-      agent-foreman-local complete my-task --summary "All tests passing, API implemented"
+      agentdeck complete my-task --summary "All tests passing, API implemented"
     """
     task = complete_task(task_id, summary)
     if not task:
@@ -298,7 +298,7 @@ def fail_cmd(task_id: str, reason: str):
     """Mark a task as failed with a reason.
 
     Example:
-      agent-foreman-local fail my-task --reason "Database connection timeout"
+      agentdeck fail my-task --reason "Database connection timeout"
     """
     task = fail_task(task_id, reason)
     if not task:
@@ -316,7 +316,7 @@ def handoff(task_id: str, notes: str):
     """Generate handoff text for next agent session.
 
     Example:
-      agent-foreman-local handoff my-task --notes "Need to review auth middleware"
+      agentdeck handoff my-task --notes "Need to review auth middleware"
     """
     if notes:
         task = update_handoff_notes(task_id, notes)
@@ -501,7 +501,7 @@ def serve(host: str | None, port: int | None):
     h = host or get_host()
     p = port or get_port()
 
-    click.echo(f"AgentStatus dashboard starting on http://{h}:{p}")
+    click.echo(f"AgentDeck dashboard starting on http://{h}:{p}")
     if h not in ("127.0.0.1", "localhost"):
         click.echo(f"Token: {token}")
     run_server(host=h, port=p)
@@ -512,12 +512,12 @@ def show_config():
     """Show current configuration."""
     cfg = load_config()
     token = get_or_create_token()
-    click.echo(f"Config file: {Path.home() / '.agent_foreman_local' / 'config.yaml'}")
+    click.echo(f"Config file: {Path.home() / '.agentdeck' / 'config.yaml'}")
     click.echo(f"Token:       {token}")
     click.echo(f"Host:        {get_host()}")
     click.echo(f"Port:        {get_port()}")
     click.echo(f"Log dir:     {get_log_dir()}")
-    click.echo(f"Tasks dir:   {Path.home() / '.agent_foreman_local' / 'tasks'}")
+    click.echo(f"Tasks dir:   {Path.home() / '.agentdeck' / 'tasks'}")
 
 
 @cli.command(name="install-service")
@@ -527,12 +527,12 @@ def show_config():
 def install_service_cmd(host: str, port: int, enable: bool):
     """Install systemd user service for auto-start.
 
-    Generates ~/.config/systemd/user/agent-foreman-local.service
+    Generates ~/.config/systemd/user/agentdeck.service
 
     After install:
-      systemctl --user start agent-foreman-local
-      systemctl --user status agent-foreman-local
-      journalctl --user -u agent-foreman-local -f
+      systemctl --user start agentdeck
+      systemctl --user status agentdeck
+      journalctl --user -u agentdeck -f
     """
     from backend.systemd import install_service
 
@@ -545,14 +545,14 @@ def install_service_cmd(host: str, port: int, enable: bool):
     click.echo(f"  Host: {host}")
     click.echo(f"  Port: {port}")
     click.echo(f"\nStart the service:")
-    click.echo(f"  systemctl --user start agent-foreman-local")
+    click.echo(f"  systemctl --user start agentdeck")
     click.echo(f"\nView logs:")
-    click.echo(f"  journalctl --user -u agent-foreman-local -f")
+    click.echo(f"  journalctl --user -u agentdeck -f")
     if enable:
         click.echo(f"\nAuto-start on login: ENABLED")
     else:
         click.echo(f"\nTo enable auto-start on login:")
-        click.echo(f"  systemctl --user enable agent-foreman-local")
+        click.echo(f"  systemctl --user enable agentdeck")
 
 
 @cli.command(name="uninstall-service")

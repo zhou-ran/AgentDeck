@@ -12,15 +12,22 @@ import psutil
 
 from backend.models import (
     ActivityTimelineItem,
+    AgentDetectionResult,
+    BackgroundJob,
     CpuMemSample,
     DiscoveredSession,
+    ForegroundAgentInfo,
+    GitStatus,
     InstructionInfo,
     ProjectNameInfo,
     ProjectRuntimeStatus,
     ProcessInfo,
     ResourceMetrics,
+    ResourceUsage,
     SystemMetrics,
 )
+from backend.log_manager import redact_sensitive_text
+from backend.rules import matching_rules
 from backend.git_utils import (
     get_changed_files,
     get_git_branch,
@@ -99,6 +106,11 @@ def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> Option
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         username = ""
 
+    try:
+        tty = proc.terminal()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        tty = None
+
     children = []
     if include_children:
         try:
@@ -116,6 +128,7 @@ def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> Option
         cmdline=info["cmdline"] or [],
         cwd=cwd,
         user=username,
+        tty=tty,
         status=info["status"] or "",
         cpu_percent=info["cpu_percent"] or 0.0,
         memory_percent=info["memory_percent"] or 0.0,
@@ -184,6 +197,135 @@ def _is_root_agent_process(proc: psutil.Process, text: str) -> bool:
     return True
 
 
+def _score_agent_candidate(text: str, source: str, high_confidence: bool = True) -> AgentDetectionResult:
+    agent = _agent_type_from_text(text) or "unknown"
+    if agent == "unknown":
+        return AgentDetectionResult(agent_type="unknown", confidence=0.0, reason="no agent marker found")
+    confidence = 0.95 if high_confidence else 0.65
+    return AgentDetectionResult(
+        agent_type=agent,
+        confidence=confidence,
+        reason=f"matched {source}",
+        evidence=[f"{source}: {text[:180]}"],
+    )
+
+
+def _source_agent_from_path(path: str) -> str:
+    lower = path.lower()
+    if "/.codex" in lower:
+        return "codex"
+    if "/.kimi-code" in lower or "/.kimi/" in lower or "/.kimi" in lower:
+        return "kimi-code"
+    if "/.claude" in lower:
+        return "claude-code"
+    return ""
+
+
+def _detect_parent_agent(ppid: int) -> AgentDetectionResult:
+    try:
+        parent = psutil.Process(ppid)
+        while parent:
+            text = _proc_text(parent)
+            result = _score_agent_candidate(text, "parent process")
+            if result.agent_type != "unknown":
+                return result
+            parent = parent.parent()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        pass
+    return AgentDetectionResult(agent_type="unknown", confidence=0.0, reason="no parent agent evidence")
+
+
+def _detect_agent_from_log_file(path: str) -> AgentDetectionResult:
+    try:
+        sample = Path(path).read_text(encoding="utf-8", errors="ignore")[-12000:]
+    except Exception:
+        return AgentDetectionResult(agent_type="unknown", confidence=0.0, reason="log unavailable")
+
+    checks = (
+        ("codex", re.compile(r"\bCodex CLI\b|\bcodex\b", re.I)),
+        ("kimi-code", re.compile(r"\bkimi[-_ ]?code\b|\bKimi\b")),
+        ("claude-code", re.compile(r"\bclaude[-_ ]?code\b|\bClaude\b")),
+    )
+    for agent, pattern in checks:
+        match = pattern.search(sample)
+        if match:
+            return AgentDetectionResult(
+                agent_type=agent,
+                confidence=0.85,
+                reason="matched session/log content",
+                evidence=[f"matched log content in {path}: {match.group(0)}"],
+            )
+    return AgentDetectionResult(agent_type="unknown", confidence=0.0, reason="no log marker found")
+
+
+def detect_agent_type(
+    process: ProcessInfo,
+    session_files: list[str] | None = None,
+    cwd: str = "",
+) -> AgentDetectionResult:
+    """Detect agent type from high-confidence process and session-source evidence.
+
+    This avoids project names, usernames, and process environments.
+    """
+    cmd_text = " ".join([process.name, *process.cmdline])
+    basename_text = " ".join(
+        [_cmd_basename(process.name), *[_cmd_basename(part) for part in process.cmdline[:2]]]
+    )
+
+    result = _score_agent_candidate(basename_text, "executable basename")
+    if result.agent_type != "unknown":
+        return result
+
+    result = _score_agent_candidate(cmd_text, "process cmd")
+    if result.agent_type != "unknown":
+        return result
+
+    if _cmd_basename(process.name) == "node" or (process.cmdline and _cmd_basename(process.cmdline[0]) == "node"):
+        result = _detect_parent_agent(process.ppid)
+        if result.agent_type != "unknown":
+            return result
+
+    evidence: list[str] = []
+    for path in session_files or []:
+        agent = _source_agent_from_path(path)
+        if agent:
+            return AgentDetectionResult(
+                agent_type=agent,
+                confidence=0.9,
+                reason="matched session source dir",
+                evidence=[f"session source: {path}"],
+            )
+        result = _detect_agent_from_log_file(path)
+        if result.agent_type != "unknown":
+            return result
+        evidence.append(f"session file checked: {path}")
+
+    for root in [cwd, get_git_root(cwd) or ""]:
+        if not root:
+            continue
+        for dirname, agent in (
+            (".codex", "codex"),
+            (".kimi-code", "kimi-code"),
+            (".kimi", "kimi-code"),
+            (".claude", "claude-code"),
+        ):
+            marker = os.path.join(root, dirname)
+            if os.path.isdir(marker):
+                return AgentDetectionResult(
+                    agent_type=agent,
+                    confidence=0.75,
+                    reason="matched project hidden agent dir",
+                    evidence=[f"project source dir: {marker}"],
+                )
+
+    return AgentDetectionResult(
+        agent_type="unknown",
+        confidence=0.0,
+        reason="no high-confidence agent evidence",
+        evidence=evidence,
+    )
+
+
 def discover_agent_processes() -> list[ProcessInfo]:
     """Scan running processes and find top-level coding agent roots."""
     results = []
@@ -213,7 +355,7 @@ def discover_agent_processes() -> list[ProcessInfo]:
 
 def _detect_agent_type(info: ProcessInfo) -> str:
     """Detect the agent type from process name/cmdline."""
-    return _agent_type_from_text(" ".join([info.name, *info.cmdline])) or "unknown"
+    return detect_agent_type(info, [], info.cwd).agent_type
 
 
 def _detect_agent_type_from_text(text: str) -> str:
@@ -258,6 +400,32 @@ def derive_project_name(cwd: str) -> ProjectNameInfo:
         git_root=git_root,
         git_branch=git_branch,
     )
+
+
+def derive_project_key(cwd: str, git_root: str | None = None) -> str:
+    base = git_root or _git_root(cwd) or cwd or "unknown"
+    normalized = os.path.normcase(os.path.realpath(os.path.expanduser(base)))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _agent_display(agent_type: str) -> str:
+    labels = {
+        "codex": "Codex",
+        "kimi-code": "Kimi",
+        "kimi": "Kimi",
+        "claude-code": "Claude",
+        "claude": "Claude",
+        "aider": "Aider",
+        "gemini": "Gemini",
+        "unknown": "Unknown",
+    }
+    return labels.get(agent_type, agent_type or "Unknown")
+
+
+def make_display_name(session_title: str | None, project_name: str, agent_type: str) -> str:
+    if session_title:
+        return session_title
+    return f"{project_name or 'unknown'} · {_agent_display(agent_type)}"
 
 
 def _recent_modified_files(cwd: str, seconds: int = 60) -> list[str]:
@@ -472,6 +640,151 @@ def _cmd_basename(cmd: str) -> str:
     return os.path.basename(cmd).lower()
 
 
+def _short_cmd(proc: ProcessInfo, limit: int = 120) -> str:
+    text = " ".join(proc.cmdline) if proc.cmdline else proc.name
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _elapsed_seconds(proc: ProcessInfo) -> int | None:
+    if not proc.create_time:
+        return None
+    return max(0, int(time.time() - proc.create_time))
+
+
+def _classify_job(proc: ProcessInfo) -> str:
+    cmd_lower = " ".join(proc.cmdline).lower() if proc.cmdline else proc.name.lower()
+    name_lower = proc.name.lower()
+    argv0 = _cmd_basename(proc.cmdline[0]) if proc.cmdline else name_lower
+
+    if any(kw in cmd_lower for kw in ("pytest", "npm test", "pnpm test", "yarn test", "vitest", "jest")):
+        return "test"
+    if any(kw in cmd_lower for kw in (
+        "npm run dev", "pnpm dev", "yarn dev", "vite", "uvicorn", "streamlit",
+        "jupyter", "rstudio-server", "flask run", "fastapi", "next dev",
+    )):
+        return "dev_server"
+    if any(kw in cmd_lower for kw in ("npm install", "pnpm install", "yarn install", "pip install", "uv pip", "conda install")):
+        return "install"
+    if argv0 == "git" or name_lower == "git":
+        return "git"
+    if argv0 in {"rg", "grep", "find", "fd", "ag"} or name_lower in {"rg", "grep", "find", "fd", "ag"}:
+        return "search"
+    if argv0 in {"python", "python3", "rscript", "bash", "sh", "node", "perl", "npm", "pnpm", "bun"}:
+        return "script"
+    return "unknown"
+
+
+def build_background_jobs(root: ProcessInfo) -> list[BackgroundJob]:
+    jobs: list[BackgroundJob] = []
+    for child in _iter_process_tree(root):
+        job_type = _classify_job(child)
+        elapsed = _elapsed_seconds(child)
+        jobs.append(BackgroundJob(
+            pid=child.pid,
+            ppid=child.ppid,
+            cmd=_short_cmd(child),
+            job_type=job_type,
+            status=child.status,
+            elapsed_sec=elapsed,
+            cpu=child.cpu_percent,
+            mem=child.memory_percent,
+            cwd=child.cwd,
+            summary=f"{job_type}: {_short_cmd(child, 80)}",
+            is_long_running=bool(elapsed and elapsed > 900),
+            detected_from="process_tree",
+        ))
+    return jobs
+
+
+def build_foreground_info(
+    root: ProcessInfo,
+    recent_output: str,
+    heartbeat_ts: float | None,
+    status: str,
+) -> ForegroundAgentInfo:
+    waiting = bool(recent_output and WAITING_RE.search(recent_output))
+    return ForegroundAgentInfo(
+        pid=root.pid,
+        cmd=_short_cmd(root, 180),
+        tty=root.tty,
+        is_interactive=bool(root.tty and root.tty != "?"),
+        waiting_input=waiting,
+        alive=True,
+        last_activity_ts=heartbeat_ts,
+        last_tool="",
+        last_message_summary=(recent_output or "")[:180],
+        status="waiting" if waiting else ("idle" if status in {"idle", "stale"} else "active"),
+    )
+
+
+def summarize_activity(status: str, reason: str, background_jobs: list[BackgroundJob], foreground: ForegroundAgentInfo) -> str:
+    priority = ["test", "dev_server", "install", "git", "search", "script", "unknown"]
+    labels = {
+        "test": "正在跑测试",
+        "dev_server": "后台服务运行中",
+        "install": "正在安装依赖",
+        "git": "正在执行 Git 操作",
+        "search": "正在搜索代码库",
+        "script": "正在运行脚本",
+        "unknown": "后台任务运行中",
+    }
+    for kind in priority:
+        job = next((item for item in background_jobs if item.job_type == kind), None)
+        if job:
+            return f"{labels[kind]}：{job.cmd}"
+    if foreground.waiting_input:
+        return "等待用户输入/授权"
+    return reason
+
+
+def status_group_for(status: str, ignored: bool = False) -> str:
+    if ignored:
+        return "ignored"
+    if status in {"error_hint", "failed"}:
+        return "error"
+    if status in {"needs_input", "waiting", "waiting_input"}:
+        return "needs_input"
+    if status in {"idle", "stale", "unknown"}:
+        return "idle"
+    return "working"
+
+
+def status_dot_for(status: str, group: str, has_error: bool = False) -> str:
+    if has_error or group == "error":
+        return "red"
+    if group in {"needs_input", "idle"} or status in {"stale", "unknown"}:
+        return "yellow"
+    if group == "ignored":
+        return "gray"
+    if group == "working":
+        return "green"
+    return "gray"
+
+
+def _build_git_status(project_status: ProjectRuntimeStatus, status_short: str, is_repo: bool) -> GitStatus:
+    staged = unstaged = untracked = 0
+    for line in status_short.splitlines():
+        if line.startswith("??"):
+            untracked += 1
+            continue
+        if len(line) >= 2:
+            if line[0] != " ":
+                staged += 1
+            if line[1] != " ":
+                unstaged += 1
+    return GitStatus(
+        branch=project_status.branch,
+        dirty_count=len(project_status.dirty_files),
+        changed_files=project_status.dirty_files[:20],
+        staged_count=staged,
+        unstaged_count=unstaged,
+        untracked_count=untracked,
+        is_repo=is_repo,
+        command_failed=False,
+    )
+
+
 def _check_child_processes(info: ProcessInfo) -> tuple[str, str] | None:
     """Check child processes for specific activity patterns."""
     for child in _iter_process_tree(info):
@@ -552,7 +865,7 @@ def discover_sessions() -> list[DiscoveredSession]:
     return sessions
 
 
-def scan_agent_sessions() -> list[DiscoveredSession]:
+def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession]:
     """Main enrichment pipeline: discover processes → parse session files → extract info → infer activity.
 
     This is the primary entry point for the SSE endpoint.
@@ -564,26 +877,50 @@ def scan_agent_sessions() -> list[DiscoveredSession]:
     enriched: list[DiscoveredSession] = []
     for session in sessions:
         cwd = session.cwd if session.cwd != "unknown" else ""
-        agent_type = session.agent_type
         root = session.root_process
+        session.root_pid = root.pid
+        session.root_cmd = " ".join(root.cmdline) if root.cmdline else root.name
+        session.user = root.user
+        session.tty = root.tty
+        session.is_interactive = bool(root.tty and root.tty != "?")
+        session.started_at = None
+        if root.create_time:
+            from datetime import datetime
+            session.started_at = datetime.fromtimestamp(root.create_time)
+            session.elapsed_sec = _elapsed_seconds(root)
 
         # 1. Derive project name
         project_name = derive_project_name(cwd)
         session.project_name = project_name
         session.project = project_name.name
+        session.project_root = project_name.git_root or cwd
+        session.short_cwd = project_name.short_cwd
+        session.project_key = derive_project_key(cwd, project_name.git_root)
+
+        # 1b. Detect agent type with process/session-source evidence.
+        from backend.session_parser import discover_session_files, parse_and_match_sessions
+        candidate_files = [str(path) for path in discover_session_files(session.agent_type or "unknown", cwd)[:8]]
+        detection = detect_agent_type(root, candidate_files, cwd)
+        session.agent_type = detection.agent_type
+        session.agent_confidence = detection.confidence
+        session.agent_detection_reason = detection.reason
+        session.agent_detection_evidence = detection.evidence
+        agent_type = session.agent_type
+        session.display_name = make_display_name(session.session_title, project_name.name, agent_type)
 
         # 2. Parse session files (heartbeat, recent_output, pending_items)
         session_data = None
         if agent_type and agent_type != "unknown":
-            from backend.session_parser import parse_and_match_sessions
             session_data = parse_and_match_sessions(
                 agent_type, cwd, root.create_time
             )
             if session_data:
                 session.heartbeat_ts = session_data.get("heartbeat_ts")
-                session.recent_output = session_data.get("recent_output", "")
+                session.recent_output = redact_sensitive_text(session_data.get("recent_output", ""))
                 session.pending_items = session_data.get("pending_items", [])
-                session.last_user_message = session_data.get("last_user_message", "")
+                session.last_user_message = redact_sensitive_text(session_data.get("last_user_message", ""))
+                session.session_title = session.last_user_message[:80] or None
+                session.display_name = make_display_name(session.session_title, project_name.name, agent_type)
                 if session_data.get("git_branch"):
                     session.project_name.git_branch = session_data["git_branch"]
 
@@ -609,30 +946,60 @@ def scan_agent_sessions() -> list[DiscoveredSession]:
         )
         session.status = activity
         session.status_reason = reason
-        session.current_activity = reason
 
         # 6. Extract user instruction
         instruction = extract_user_instruction(cwd, agent_type, session_data)
         session.instruction = instruction
-        session.user_instruction = instruction.text
+        session.user_instruction = redact_sensitive_text(instruction.text)
+        session.instruction_source = instruction.source
+        session.instruction_confidence = instruction.confidence
         session.source_file = instruction.source_file or (session_data or {}).get("source_file", "")
         session.confidence = instruction.confidence
 
         # 7. Collect active commands and child processes
         session.active_commands = _collect_active_commands(root)
         session.child_processes = root.children
+        session.background_jobs = build_background_jobs(root)
+        session.foreground = build_foreground_info(root, session.recent_output, session.heartbeat_ts, session.status)
+        session.current_activity = summarize_activity(session.status, reason, session.background_jobs, session.foreground)
 
         # 8. Resource metrics
         session.cpu_percent = root.cpu_percent
         session.memory_percent = root.memory_percent
+        session.resource_usage = ResourceUsage(
+            cpu_percent=root.cpu_percent,
+            memory_percent=root.memory_percent,
+            rss_mb=(root.resources.rss_mb if root.resources else 0.0),
+            children_count=len(session.background_jobs),
+        )
 
         # 9. Project runtime status
         if cwd:
             session.project_status = get_project_runtime_status(cwd, recent_files)
             session.git_status = "dirty" if session.project_status.has_uncommitted else "clean"
+            status_short = get_git_status_short(get_git_root(cwd) or cwd)
+            session.git_status_detail = _build_git_status(
+                session.project_status,
+                status_short,
+                bool(get_git_root(cwd)),
+            )
             if session.project_status.branch and not session.project_name.git_branch:
                 session.project_name.git_branch = session.project_status.branch
         session.recent_files = recent_files[:20]
+
+        pin_rules = matching_rules("pins", session)
+        ignore_rules = matching_rules("ignored", session)
+        session.is_pinned = bool(pin_rules)
+        session.is_ignored = bool(ignore_rules)
+        session.tags = []
+        if session.is_pinned:
+            session.tags.append("pinned")
+        if session.is_ignored:
+            session.tags.append("ignored")
+        session.status_group = status_group_for(session.status, ignored=session.is_ignored)
+        session.status_dot = status_dot_for(session.status, session.status_group, has_error=bool(session.error_hints))
+        if session.is_ignored and not include_ignored:
+            continue
 
         # 11. Build timeline
         timeline: list[ActivityTimelineItem] = []
@@ -659,7 +1026,7 @@ def scan_agent_sessions() -> list[DiscoveredSession]:
                 try:
                     content = log_files[0].read_text(encoding="utf-8", errors="ignore")
                     lines = content.strip().split("\n")
-                    session.recent_logs = lines[-10:]
+                    session.recent_logs = [redact_sensitive_text(line) for line in lines[-10:]]
                 except Exception:
                     pass
 

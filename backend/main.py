@@ -18,7 +18,7 @@ from backend.api.tasks import router as tasks_router
 from backend.config import get_host, get_port
 from backend.security import api_rate_limiter, init_allowed_dirs
 
-logger = logging.getLogger("agentstatus")
+logger = logging.getLogger("agentdeck")
 
 
 @asynccontextmanager
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AgentStatus",
+    title="AgentDeck",
     description="Local coding agent monitoring dashboard",
     version="0.2.0",
     lifespan=lifespan,
@@ -126,7 +126,7 @@ def run_server(host: str | None = None, port: int | None = None):
         from backend.security import get_token
         token = get_token()
         print("\n" + "=" * 60, file=sys.stderr)
-        print("  WARNING: AgentStatus is listening on ALL interfaces!", file=sys.stderr)
+        print("  WARNING: AgentDeck is listening on ALL interfaces!", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         print(f"  Address: http://{h}:{p}", file=sys.stderr)
         print(f"  Token:   {token}", file=sys.stderr)
@@ -135,7 +135,7 @@ def run_server(host: str | None = None, port: int | None = None):
         print("  Use the Bearer token above to authenticate.", file=sys.stderr)
         print("", file=sys.stderr)
         print("  To bind to localhost only:", file=sys.stderr)
-        print("    agent-foreman-local serve --host 127.0.0.1", file=sys.stderr)
+        print("    agentdeck serve --host 127.0.0.1", file=sys.stderr)
         print("=" * 60 + "\n", file=sys.stderr)
 
     uvicorn.run(app, host=h, port=p, log_level="info")

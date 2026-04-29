@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-AgentStatus — a local coding agent monitoring dashboard + CLI tool. Monitors multiple coding agents (codex, claude, aider, gemini, pytest, npm, git, Rscript, etc.) on a Linux server with a unified web UI.
+AgentDeck — a local coding agent monitoring dashboard + CLI tool. Monitors multiple coding agents (codex, claude, aider, gemini, pytest, npm, git, Rscript, etc.) on a Linux server with a unified web UI.
 
 ## Tech Stack
 
@@ -26,25 +26,25 @@ make test                       # Run pytest
 make build-frontend             # Build frontend to backend/static/
 make clean                      # Clean build artifacts
 
-# CLI (agent-foreman-local, alias: agentctl)
-agent-foreman-local serve [--host 127.0.0.1] [--port 8787]
-agent-foreman-local start <name> --dir <dir> -- <command...>
-agent-foreman-local init <name> --dir <dir> --goal "..."
-agent-foreman-local set-plan <task_id> plan.json
-agent-foreman-local note <task_id> "..."
-agent-foreman-local step <task_id> <step_id> --status running|done|blocked
-agent-foreman-local complete <task_id> --summary "..."
-agent-foreman-local fail <task_id> --reason "..."
-agent-foreman-local handoff <task_id>
-agent-foreman-local list [--all]
-agent-foreman-local status <task_id>
-agent-foreman-local stop <task_id>
-agent-foreman-local tail <task_id> [-f]
-agent-foreman-local import-pid <pid> --name <name>
-agent-foreman-local discover
-agent-foreman-local config
-agent-foreman-local install-service [--enable]
-agent-foreman-local uninstall-service
+# CLI (agentdeck, alias: agentctl)
+agentdeck serve [--host 127.0.0.1] [--port 8787]
+agentdeck start <name> --dir <dir> -- <command...>
+agentdeck init <name> --dir <dir> --goal "..."
+agentdeck set-plan <task_id> plan.json
+agentdeck note <task_id> "..."
+agentdeck step <task_id> <step_id> --status running|done|blocked
+agentdeck complete <task_id> --summary "..."
+agentdeck fail <task_id> --reason "..."
+agentdeck handoff <task_id>
+agentdeck list [--all]
+agentdeck status <task_id>
+agentdeck stop <task_id>
+agentdeck tail <task_id> [-f]
+agentdeck import-pid <pid> --name <name>
+agentdeck discover
+agentdeck config
+agentdeck install-service [--enable]
+agentdeck uninstall-service
 
 # Frontend development
 cd frontend
@@ -57,7 +57,7 @@ npm run build        # Build to backend/static/
 ```
 backend/
 ├── models.py          # Pydantic models: Task, TaskStatus, ProcessInfo, PlanStep
-├── config.py          # Config loader (~/.agent_foreman_local/config.yaml)
+├── config.py          # Config loader (~/.agentdeck/config.yaml)
 ├── task_manager.py    # Task CRUD + enrichment + plan/step management
 ├── process_scanner.py # psutil-based agent discovery + process tree
 ├── state_machine.py   # Status inference + error hint detection
@@ -65,7 +65,7 @@ backend/
 ├── git_utils.py       # Git changed files detection
 ├── security.py        # Path safety, PID verify, rate limiter, atomic write
 ├── systemd.py         # systemd user service generation
-├── cli.py             # click CLI: all agent-foreman-local commands
+├── cli.py             # click CLI: all agentdeck commands
 ├── main.py            # FastAPI app, mounts API routers + static files
 └── api/
     ├── tasks.py       # /api/tasks CRUD, stop, notes, log, process-tree
@@ -106,7 +106,7 @@ scripts/
 
 ## Key Patterns
 
-- **Task lifecycle**: `agent-foreman-local start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
+- **Task lifecycle**: `agentdeck start` creates a JSON task file + launches subprocess with stdout/stderr redirected to `~/agent_logs/{task_id}.log`
 - **State enrichment**: `task_manager.enrich_task()` combines persisted task data with live psutil data on every API call
 - **Status inference**: `state_machine.infer_status()` checks process alive/dead, CPU%, log mtime
 - **Error detection**: `state_machine.check_error_hint()` regex-matches `Traceback|ERROR|Failed|Exception` in log tail
@@ -115,7 +115,7 @@ scripts/
 
 ## File Locations at Runtime
 
-- Config: `~/.agent_foreman_local/config.yaml`
-- Task state: `~/.agent_foreman_local/tasks/{task_id}.json`
+- Config: `~/.agentdeck/config.yaml`
+- Task state: `~/.agentdeck/tasks/{task_id}.json`
 - Logs: `~/agent_logs/{task_id}.log`
-- systemd service: `~/.config/systemd/user/agent-foreman-local.service`
+- systemd service: `~/.config/systemd/user/agentdeck.service`

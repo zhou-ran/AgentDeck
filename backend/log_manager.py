@@ -2,8 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 from typing import AsyncIterator
+
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"(?i)\b(api[_-]?key\s*=\s*)[^\s]+"),
+    re.compile(r"(?i)\b(authorization\s*:\s*bearer\s+)[^\s]+"),
+)
+
+
+def redact_sensitive_text(text: str) -> str:
+    """Redact common API credentials before log text leaves the backend."""
+    redacted = SECRET_PATTERNS[0].sub("sk-...[redacted]", text)
+    redacted = SECRET_PATTERNS[1].sub(r"\1[redacted]", redacted)
+    redacted = SECRET_PATTERNS[2].sub(r"\1[redacted]", redacted)
+    return redacted
 
 
 def get_log_tail(path: Path, lines: int = 50) -> list[str]:
@@ -28,7 +43,7 @@ def get_log_tail(path: Path, lines: int = 50) -> list[str]:
 
             text = data.decode("utf-8", errors="replace")
             result = text.splitlines()[-lines:]
-            return result
+            return [redact_sensitive_text(line) for line in result]
     except (PermissionError, OSError):
         return []
 
@@ -54,7 +69,7 @@ async def tail_log(path: Path, from_offset: int = 0) -> AsyncIterator[str]:
                     offset = size
                     text = new_data.decode("utf-8", errors="replace")
                     for line in text.splitlines():
-                        yield line
+                        yield redact_sensitive_text(line)
 
             await asyncio.sleep(0.5)
     except asyncio.CancelledError:

@@ -1,7 +1,7 @@
 import type { Task, ProcessInfo, DiscoveredSession, LogResponse } from '../types'
 
 const BASE = '/api'
-const TOKEN_STORAGE_KEY = 'agentstatus.token'
+const TOKEN_STORAGE_KEY = 'agentdeck.token'
 
 export function getAuthToken(): string {
   try {

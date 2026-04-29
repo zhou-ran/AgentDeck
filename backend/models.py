@@ -72,6 +72,69 @@ class ProjectRuntimeStatus(BaseModel):
     recent_files: list[str] = Field(default_factory=list)
 
 
+class AgentDetectionResult(BaseModel):
+    """Structured result for agent type detection."""
+    agent_type: str = "unknown"
+    confidence: float = 0.0
+    reason: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ForegroundAgentInfo(BaseModel):
+    pid: Optional[int] = None
+    cmd: str = ""
+    tty: Optional[str] = None
+    is_interactive: bool = False
+    waiting_input: bool = False
+    alive: bool = False
+    last_activity_ts: Optional[float] = None
+    last_tool: str = ""
+    last_message_summary: str = ""
+    status: str = "unknown"
+
+
+class BackgroundJob(BaseModel):
+    pid: int
+    ppid: int
+    cmd: str = ""
+    job_type: str = "unknown"
+    status: str = ""
+    elapsed_sec: Optional[int] = None
+    cpu: float = 0.0
+    mem: float = 0.0
+    cwd: str = ""
+    summary: str = ""
+    is_long_running: bool = False
+    detected_from: str = "process_tree"
+
+
+class GitStatus(BaseModel):
+    branch: str = ""
+    dirty_count: int = 0
+    changed_files: list[str] = Field(default_factory=list)
+    staged_count: int = 0
+    unstaged_count: int = 0
+    untracked_count: int = 0
+    is_repo: bool = False
+    command_failed: bool = False
+
+
+class ResourceUsage(BaseModel):
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+    rss_mb: float = 0.0
+    children_count: int = 0
+
+
+class Rule(BaseModel):
+    id: str
+    type: str
+    value: str
+    created_at: str
+    note: str = ""
+    active: bool = True
+
+
 class ActivityTimelineItem(BaseModel):
     """Single entry in the activity timeline."""
     ts: float = 0.0
@@ -141,6 +204,7 @@ class ProcessInfo(BaseModel):
     cmdline: list[str]
     cwd: str = ""
     user: str = ""
+    tty: Optional[str] = None
     status: str = ""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -202,21 +266,42 @@ class TaskFail(BaseModel):
 class DiscoveredSession(BaseModel):
     """A group of processes under the same cwd, discovered by auto-scan."""
     session_id: str
+    project_key: str = ""
     cwd: str
     root_process: ProcessInfo
     all_pids: list[int] = Field(default_factory=list)
     agent_type: str = ""
+    agent_confidence: float = 0.0
+    agent_detection_reason: str = ""
+    agent_detection_evidence: list[str] = Field(default_factory=list)
+    root_pid: Optional[int] = None
+    root_cmd: str = ""
+    user: str = ""
+    tty: Optional[str] = None
+    is_interactive: bool = False
+    started_at: Optional[datetime] = None
+    elapsed_sec: Optional[int] = None
 
     # Enriched fields
     project_name: ProjectNameInfo = Field(default_factory=ProjectNameInfo)
     project: str = ""  # display name shortcut
+    project_root: str = ""
+    short_cwd: str = ""
+    session_title: Optional[str] = None
+    display_name: str = ""
     status: str = "unknown"
+    status_group: str = "idle"
+    status_dot: str = "gray"
     status_reason: str = ""
     current_activity: str = ""
     user_instruction: str = ""
+    instruction_source: Optional[str] = None
+    instruction_confidence: float = 0.0
     instruction: InstructionInfo = Field(default_factory=InstructionInfo)
     child_processes: list[ProcessInfo] = Field(default_factory=list)
     active_commands: list[str] = Field(default_factory=list)
+    foreground: ForegroundAgentInfo = Field(default_factory=ForegroundAgentInfo)
+    background_jobs: list[BackgroundJob] = Field(default_factory=list)
 
     # Heartbeat
     heartbeat_ts: Optional[float] = None
@@ -236,8 +321,13 @@ class DiscoveredSession(BaseModel):
     # Project status
     project_status: ProjectRuntimeStatus = Field(default_factory=ProjectRuntimeStatus)
     git_status: str = ""
+    git_status_detail: GitStatus = Field(default_factory=GitStatus)
     error_hints: list[str] = Field(default_factory=list)
     recent_files: list[str] = Field(default_factory=list)
+    resource_usage: ResourceUsage = Field(default_factory=ResourceUsage)
+    is_pinned: bool = False
+    is_ignored: bool = False
+    tags: list[str] = Field(default_factory=list)
 
     # Timeline
     timeline: list[ActivityTimelineItem] = Field(default_factory=list)

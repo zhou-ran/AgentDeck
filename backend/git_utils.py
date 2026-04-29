@@ -1,4 +1,4 @@
-"""Safe git operations for AgentStatus.
+"""Safe git operations for AgentDeck.
 
 Only allows the read-only git commands needed by the local monitor.
 No dangerous commands (push, pull, commit, checkout, reset, etc.)
