@@ -118,9 +118,23 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
 
   useEffect(() => {
     setAllSessions(prev => {
+      const prevById = new Map(prev.map(item => [item.session_id, item]))
       const liveIds = new Set(discovered.map(item => item.session_id))
       const retainedIgnored = prev.filter(item => item.is_ignored && !liveIds.has(item.session_id))
-      return [...retainedIgnored, ...discovered]
+      // Merge SSE updates with local pin/ignore overrides so an optimistic
+      // click is not undone by a stale SSE frame that arrives a moment later.
+      // The server-truth is reconciled by refreshAllSessions() in the
+      // background — this just prevents the visible "flash back".
+      const merged = discovered.map(item => {
+        const local = prevById.get(item.session_id)
+        if (!local) return item
+        return {
+          ...item,
+          is_ignored: local.is_ignored ? true : item.is_ignored,
+          is_pinned: local.is_pinned ? true : item.is_pinned,
+        }
+      })
+      return [...retainedIgnored, ...merged]
     })
   }, [discovered])
 
@@ -133,8 +147,8 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
       ])
       setPinRules(pins.rules)
       setIgnoredRules(ignored.rules)
-    } catch {
-      // Rules are auxiliary; live sessions continue via SSE.
+    } catch (err) {
+      console.error('Failed to fetch rules:', err)
     }
   }
 
@@ -146,8 +160,8 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
     try {
       const response = await api.discover(true)
       setAllSessions(response.sessions)
-    } catch {
-      // SSE remains the primary live source.
+    } catch (err) {
+      console.error('Failed to refresh sessions:', err)
     }
     await refreshRules()
   }
@@ -224,23 +238,33 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
   }, [visibleSessions.length])
 
   async function handleSessionAction(session: DiscoveredSession, action: 'pin' | 'ignore') {
-    if (demoMode) {
-      setAllSessions(prev => prev.map(item => {
-        if (item.session_id !== session.session_id) return item
-        if (action === 'pin') return { ...item, is_pinned: !item.is_pinned }
-        return { ...item, is_ignored: !item.is_ignored }
-      }))
+    // Optimistic update: reflect the click instantly, then reconcile in background.
+    const nextPinned = action === 'pin' ? !session.is_pinned : session.is_pinned
+    const nextIgnored = action === 'ignore' ? !session.is_ignored : session.is_ignored
+    setAllSessions(prev => prev.map(item =>
+      item.session_id === session.session_id
+        ? { ...item, is_pinned: nextPinned, is_ignored: nextIgnored }
+        : item
+    ))
+
+    if (demoMode) return
+
+    try {
+      if (action === 'pin') {
+        if (session.is_pinned) await api.unpinSession(session.session_id)
+        else await api.pinSession(session.session_id)
+      } else if (session.is_ignored) {
+        await api.unignoreSession(session.session_id)
+      } else {
+        await api.ignoreSession(session.session_id)
+      }
+    } catch {
+      // Roll back the optimistic update by re-syncing from the server.
+      refreshAllSessions()
       return
     }
-    if (action === 'pin') {
-      if (session.is_pinned) await api.unpinSession(session.session_id)
-      else await api.pinSession(session.session_id)
-    } else if (session.is_ignored) {
-      await api.unignoreSession(session.session_id)
-    } else {
-      await api.ignoreSession(session.session_id)
-    }
-    await refreshAllSessions()
+    // Reconcile in the background — do not block the UI.
+    refreshAllSessions()
   }
 
   async function restoreIgnored(rule: Rule) {
