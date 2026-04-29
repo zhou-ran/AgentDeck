@@ -40,7 +40,7 @@ from backend.task_manager import (
     update_handoff_notes,
 )
 from backend.process_scanner import is_process_alive, discover_sessions
-from backend.security import is_safe_project_dir, verify_pid_for_task, verify_pid_for_task
+from backend.security import is_safe_project_dir, verify_pid_for_task
 
 
 @click.group()
@@ -103,6 +103,11 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
         )
     except FileNotFoundError:
         click.echo(f"Error: command not found: {command[0]}", err=True)
+        log_file.close()
+        delete_task(task_id)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: failed to start process: {e}", err=True)
         log_file.close()
         delete_task(task_id)
         sys.exit(1)

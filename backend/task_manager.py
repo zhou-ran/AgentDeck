@@ -6,9 +6,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import psutil
+
 from backend.config import get_log_dir, get_tasks_dir
 from backend.git_utils import get_changed_files
-from backend.log_manager import get_log_tail
+from backend.log_manager import get_log_mtime, get_log_size, get_log_tail
 from backend.models import (
     ProcessInfo,
     ProgressLogEntry,
@@ -104,9 +106,18 @@ def enrich_task(task: Task) -> Task:
     task.status = infer_status(task, alive, cpu, log_p)
     task.has_error_hint = check_error_hint(log_p)
 
-    # Record ended_at if process died
+    # Record ended_at and exit_code if process died
     if not alive and task.ended_at is None:
         task.ended_at = datetime.now()
+        # Try to capture exit code (best-effort: only works for zombie processes)
+        if task.exit_code is None:
+            try:
+                proc = psutil.Process(task.pid)
+                if proc.status() == psutil.STATUS_ZOMBIE:
+                    task.exit_code = proc.wait(timeout=0.1)
+            except (psutil.NoSuchProcess, psutil.TimeoutExpired,
+                    psutil.AccessDenied, psutil.ZombieProcess, OSError):
+                pass
 
     # Update changed files from git
     task.changed_files = get_changed_files(task.project_dir)
@@ -148,6 +159,19 @@ def get_task_log(task_id: str, lines: int = 50) -> list[str]:
     if not is_safe_log_path(log_p):
         return []
     return get_log_tail(log_p, lines)
+
+
+def get_task_log_metadata(task_id: str) -> dict[str, int | float]:
+    """Return safe log metadata for API/SSE responses."""
+    metadata: dict[str, int | float] = {"log_size": 0, "log_mtime": 0.0}
+    if not is_valid_task_id(task_id):
+        return metadata
+    log_p = _log_path(task_id)
+    if not log_p.exists() or not is_safe_log_path(log_p):
+        return metadata
+    metadata["log_size"] = get_log_size(log_p)
+    metadata["log_mtime"] = get_log_mtime(log_p)
+    return metadata
 
 
 def add_progress_note(task_id: str, note: str, step_id: Optional[str] = None) -> Optional[Task]:
