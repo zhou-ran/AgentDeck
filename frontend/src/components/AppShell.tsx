@@ -15,6 +15,7 @@ export function AppShell({
   onOpenPalette,
   connected,
   scanMeta,
+  sidebarStats,
   children,
 }: {
   activeView: ViewKey
@@ -28,6 +29,7 @@ export function AppShell({
   onOpenPalette?: () => void
   connected: boolean
   scanMeta: ScanMeta | null
+  sidebarStats?: ReactNode
   children: ReactNode
 }) {
   return (
@@ -38,6 +40,7 @@ export function AppShell({
         items={sidebarItems}
         projects={projects}
         agents={agents}
+        stats={sidebarStats}
       />
       <div className="min-h-screen lg:pl-[264px]">
         <TopToolbar

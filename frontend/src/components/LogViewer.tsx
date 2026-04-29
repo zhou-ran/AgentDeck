@@ -8,14 +8,17 @@ function redact(line: string): string {
 }
 
 export function LogViewer({ lines, height = '300px' }: { lines: string[]; height?: string }) {
-  const endRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
   }, [lines])
 
   return (
     <div
+      ref={scrollRef}
       className="mono overflow-auto rounded-2xl border border-[var(--border)] bg-black/[0.035] text-xs leading-relaxed dark:bg-white/[0.055]"
       style={{ maxHeight: height }}
     >
@@ -53,7 +56,6 @@ export function LogViewer({ lines, height = '300px' }: { lines: string[]; height
             )
           })
         )}
-        <div ref={endRef} />
       </div>
     </div>
   )

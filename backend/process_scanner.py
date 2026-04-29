@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import collections
+import getpass
 import hashlib
 import os
 import re
@@ -68,6 +69,51 @@ INSTRUCTION_LABEL_RE = re.compile(
     r"(?:^|\n)(?:user(?:\s+instruction)?|task|goal|指令|任务|目标)\s*[:：]\s*(.+?)(?:\n|$)",
     re.I,
 )
+
+AUTO_HIDE_INACTIVE_SECONDS = 2 * 60 * 60
+
+
+def _current_server_user() -> str:
+    """Return the OS user running AgentDeck.
+
+    psutil may report usernames as either "user" or "domain\\user" depending on
+    platform, so comparisons should go through _same_user().
+    """
+    return getpass.getuser()
+
+
+def _same_user(process_user: str, server_user: str) -> bool:
+    if not process_user or not server_user:
+        return True
+    process_short = process_user.replace("\\", "/").split("/")[-1]
+    server_short = server_user.replace("\\", "/").split("/")[-1]
+    return process_user == server_user or process_short == server_short
+
+
+def _auto_ignore_reason(
+    session: DiscoveredSession,
+    *,
+    server_user: str,
+    recent_files: list[str],
+) -> str:
+    """Return a reason when a discovered session should be hidden by policy."""
+    if not _same_user(session.user, server_user):
+        return f"other user: {session.user or 'unknown'}"
+
+    if session.heartbeat_age_sec is not None and session.heartbeat_age_sec > AUTO_HIDE_INACTIVE_SECONDS:
+        return "inactive for more than 2 hours"
+
+    no_recent_work = (
+        session.heartbeat_ts is None
+        and (session.elapsed_sec or 0) > AUTO_HIDE_INACTIVE_SECONDS
+        and session.cpu_percent < 3
+        and not session.active_commands
+        and not recent_files
+    )
+    if no_recent_work:
+        return "no visible activity for more than 2 hours"
+
+    return ""
 
 
 def _format_elapsed(start_time: float) -> str:
@@ -878,6 +924,7 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
     if not sessions:
         return []
 
+    server_user = _current_server_user()
     enriched: list[DiscoveredSession] = []
     for session in sessions:
         cwd = session.cwd if session.cwd != "unknown" else ""
@@ -998,6 +1045,11 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
         session.tags = []
         if session.is_pinned:
             session.tags.append("pinned")
+        auto_ignore_reason = _auto_ignore_reason(session, server_user=server_user, recent_files=recent_files)
+        if auto_ignore_reason:
+            session.is_ignored = True
+            session.tags.append("auto_ignored")
+            session.status_reason = f"{session.status_reason} ({auto_ignore_reason})" if session.status_reason else auto_ignore_reason
         if session.is_ignored:
             session.tags.append("ignored")
         session.status_group = status_group_for(session.status, ignored=session.is_ignored)

@@ -251,8 +251,16 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
   }
 
   function selectSession(session: DiscoveredSession) {
-    setSelectedTask(null)
-    setSelectedSessionId(session.session_id)
+    preserveWindowScroll(() => {
+      setSelectedTask(null)
+      setSelectedSessionId(session.session_id)
+    })
+  }
+
+  function selectTask(task: Task) {
+    preserveWindowScroll(() => {
+      setSelectedTask(task)
+    })
   }
 
   const commands = useMemo<CommandItem[]>(() => {
@@ -398,6 +406,16 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
       connected={connected}
       scanMeta={scanMeta}
       onOpenPalette={() => setCommandOpen(true)}
+      sidebarStats={(
+        <DashboardStats
+          active={liveSessions.length}
+          running={runningSessions.length}
+          waiting={waitingSessions.length}
+          idle={idleSessions.length}
+          failed={failedSessions.length}
+          doneToday={completedToday(tasks)}
+        />
+      )}
     >
       <div className="space-y-5">
         <section className="flex flex-wrap items-end justify-between gap-4">
@@ -416,14 +434,6 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
               Demo Mode
             </div>
           )}
-        </section>
-
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <StatCard label="Active" value={liveSessions.length} detail={`${runningSessions.length} running`} status="green" />
-          <StatCard label="Needs Input" value={waitingSessions.length} detail="Waiting for you" status="orange" />
-          <StatCard label="Idle" value={idleSessions.length} detail="No immediate action" status="yellow" />
-          <StatCard label="Failed" value={failedSessions.length} detail="Review recommended" status="red" />
-          <StatCard label="Done Today" value={completedToday(tasks)} detail="Managed tasks" status="blue" />
         </section>
 
         {activeView === 'settings' ? (
@@ -498,24 +508,61 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
               )}
 
               {searchedManagedTasks.length > 0 && activeView !== 'ignored' && (
-                <ManagedTasks tasks={searchedManagedTasks} selectedTaskId={selectedTaskLive?.task_id || null} onSelect={task => setSelectedTask(task)} />
+                <ManagedTasks tasks={searchedManagedTasks} selectedTaskId={selectedTaskLive?.task_id || null} onSelect={selectTask} />
               )}
 
               {systemMetrics && <SystemOverview metrics={systemMetrics} />}
             </div>
 
-            <div className="hidden xl:block">
-              {selectedTaskLive ? (
-                <TaskDetailPanel task={selectedTaskLive} onClose={() => setSelectedTask(null)} />
-              ) : (
-                <SessionDetailPanel session={selectedSession} onClose={() => setSelectedSessionId(null)} onAction={handleSessionAction} />
-              )}
-            </div>
+            <aside className="detail-sidebar hidden h-[calc(100vh-104px)] min-h-0 overflow-hidden xl:sticky xl:top-[92px] xl:block">
+              <div className="h-full min-h-0 overflow-hidden">
+                {selectedTaskLive ? (
+                  <TaskDetailPanel task={selectedTaskLive} onClose={() => preserveWindowScroll(() => setSelectedTask(null))} />
+                ) : (
+                  <SessionDetailPanel session={selectedSession} onClose={() => preserveWindowScroll(() => setSelectedSessionId(null))} onAction={handleSessionAction} />
+                )}
+              </div>
+            </aside>
           </div>
         )}
       </div>
       <CommandPalette open={commandOpen} commands={commands} onClose={() => setCommandOpen(false)} />
     </AppShell>
+  )
+}
+
+function preserveWindowScroll(update: () => void) {
+  const x = window.scrollX
+  const y = window.scrollY
+  update()
+  requestAnimationFrame(() => window.scrollTo(x, y))
+}
+
+function DashboardStats({
+  active,
+  running,
+  waiting,
+  idle,
+  failed,
+  doneToday,
+}: {
+  active: number
+  running: number
+  waiting: number
+  idle: number
+  failed: number
+  doneToday: number
+}) {
+  return (
+    <section className="grid shrink-0 grid-cols-2 gap-2">
+      <StatCard compact label="Active" value={active} detail={`${running} running`} status="green" />
+      <StatCard compact label="Needs Input" value={waiting} detail="Waiting for you" status="orange" />
+      <StatCard compact label="Idle" value={idle} detail="No immediate action" status="yellow" />
+      <StatCard compact label="Failed" value={failed} detail="Review recommended" status="red" />
+      <div className="col-span-2">
+        <StatCard compact label="Done Today" value={doneToday} detail="Managed tasks" status="blue" />
+      </div>
+    </section>
   )
 }
 
