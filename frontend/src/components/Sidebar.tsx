@@ -17,12 +17,14 @@ export function Sidebar({
   items,
   projects,
   agents,
+  stats,
 }: {
   activeView: ViewKey
   onViewChange: (view: ViewKey) => void
   items: SidebarItem[]
   projects: string[]
   agents: string[]
+  stats?: ReactNode
 }) {
   return (
     <aside className="glass-panel fixed inset-x-3 bottom-3 top-3 z-40 hidden w-[240px] flex-col rounded-[22px] p-3 lg:flex">
@@ -37,6 +39,8 @@ export function Sidebar({
           <div className="truncate text-[11px] text-muted">Local agent control</div>
         </div>
       </div>
+
+      {stats && <div className="mb-4 px-1">{stats}</div>}
 
       <nav className="space-y-5 overflow-y-auto pr-1">
         <SidebarSection title="Status">

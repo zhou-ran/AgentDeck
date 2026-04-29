@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { LogResponse, ProcessInfo, Task } from '../types'
 import { api } from '../api/client'
 import { HandoffPanel, type HandoffData } from './HandoffPanel'
@@ -19,8 +19,13 @@ export function TaskDetailPanel({
   task: Task | null
   onClose: () => void
 }) {
+  const panelRef = useRef<HTMLElement>(null)
   const [log, setLog] = useState<LogResponse | null>(null)
   const [tree, setTree] = useState<ProcessInfo | null>(null)
+
+  useLayoutEffect(() => {
+    panelRef.current?.scrollTo({ top: 0 })
+  }, [task?.task_id])
 
   useEffect(() => {
     if (!task) return
@@ -61,7 +66,7 @@ export function TaskDetailPanel({
   const handoff = buildTaskHandoff(task, logLines)
 
   return (
-    <aside className="glass-panel-strong max-h-[calc(100vh-112px)] overflow-auto rounded-[22px] p-5">
+    <aside ref={panelRef} className="glass-panel-strong h-full max-h-[calc(100vh-112px)] overflow-auto rounded-[22px] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

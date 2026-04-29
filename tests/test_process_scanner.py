@@ -8,11 +8,14 @@ from collections import namedtuple
 
 from backend.models import ProcessInfo
 from backend.process_scanner import (
+    AUTO_HIDE_INACTIVE_SECONDS,
     discover_agent_processes,
     discover_sessions,
     get_system_metrics,
     is_process_alive,
+    _auto_ignore_reason,
     _format_elapsed,
+    _same_user,
 )
 
 
@@ -122,3 +125,68 @@ class TestDiscoverAgentProcesses:
         assert len(sessions) == 2
         assert {s.agent_type for s in sessions} == {"codex", "kimi-code"}
         assert len({s.session_id for s in sessions}) == 2
+
+
+class TestAutoIgnorePolicy:
+    def test_same_user_accepts_domain_qualified_names(self):
+        assert _same_user("domain\\alice", "alice") is True
+        assert _same_user("alice", "alice") is True
+        assert _same_user("bob", "alice") is False
+
+    def test_other_user_is_auto_ignored(self):
+        session = _session_for_policy(user="bob")
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == "other user: bob"
+
+    def test_heartbeat_older_than_two_hours_is_auto_ignored(self):
+        session = _session_for_policy(user="alice")
+        session.heartbeat_ts = time.time() - AUTO_HIDE_INACTIVE_SECONDS - 1
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == "inactive for more than 2 hours"
+
+    def test_long_running_without_visible_activity_is_auto_ignored(self):
+        session = _session_for_policy(user="alice")
+        session.elapsed_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.cpu_percent = 0.1
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == "no visible activity for more than 2 hours"
+
+    def test_recent_work_keeps_long_running_session_visible(self):
+        session = _session_for_policy(user="alice")
+        session.elapsed_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.cpu_percent = 0.1
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=["backend/main.py"])
+
+        assert reason == ""
+
+
+def _session_for_policy(user: str):
+    from backend.models import DiscoveredSession
+
+    root = ProcessInfo(
+        pid=10,
+        ppid=1,
+        name="codex",
+        cmdline=["codex"],
+        cwd="/tmp/project",
+        user=user,
+        create_time=time.time() - 60,
+    )
+    session = DiscoveredSession(
+        session_id="policy-test",
+        cwd="/tmp/project",
+        root_process=root,
+        agent_type="codex",
+        user=user,
+    )
+    session.elapsed_sec = 60
+    session.cpu_percent = 0.0
+    return session

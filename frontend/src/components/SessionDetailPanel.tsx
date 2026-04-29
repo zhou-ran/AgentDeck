@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import type { DiscoveredSession } from '../types'
 import { AgentBadge } from './AgentBadge'
 import { HandoffPanel, type HandoffData } from './HandoffPanel'
@@ -34,6 +35,12 @@ export function SessionDetailPanel({
   onClose: () => void
   onAction: (session: DiscoveredSession, action: 'pin' | 'ignore') => void
 }) {
+  const panelRef = useRef<HTMLElement>(null)
+
+  useLayoutEffect(() => {
+    panelRef.current?.scrollTo({ top: 0 })
+  }, [session?.session_id])
+
   if (!session) {
     return (
       <aside className="glass-panel-strong hidden min-h-[560px] rounded-[22px] p-5 xl:block">
@@ -54,7 +61,7 @@ export function SessionDetailPanel({
   const draftHandoff = buildSessionHandoff(session, dirtyFiles)
 
   return (
-    <aside className="glass-panel-strong max-h-[calc(100vh-112px)] overflow-auto rounded-[22px] p-5">
+    <aside ref={panelRef} className="glass-panel-strong h-full max-h-[calc(100vh-112px)] overflow-auto rounded-[22px] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
