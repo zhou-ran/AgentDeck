@@ -59,6 +59,7 @@ export function SessionDetailPanel({
   const risks = getSessionRiskHints(session)
   const timeline = buildSessionTimeline(session)
   const draftHandoff = buildSessionHandoff(session, dirtyFiles)
+  const taskId = session.task_id || session.session_id
 
   return (
     <aside ref={panelRef} className="glass-panel-strong h-full max-h-[calc(100vh-112px)] overflow-auto rounded-[22px] p-5">
@@ -69,16 +70,39 @@ export function SessionDetailPanel({
             <AgentBadge type={session.agent_type} confidence={session.agent_confidence} session={session} />
             {session.is_pinned && <span className="rounded-full bg-yellow-500/10 px-2 py-0.5 text-[11px] text-yellow-700 dark:text-yellow-300">Pinned</span>}
           </div>
+          <div className="mt-3 rounded-xl bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Task ID</div>
+            <div className="mt-1 truncate mono text-xs text-app" title={taskId}>{taskId}</div>
+          </div>
           <h2 className="mt-3 truncate text-xl font-semibold tracking-tight text-app">{projectName}</h2>
           <div className="mt-1 truncate text-sm text-muted">{session.short_cwd || session.cwd}</div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-full border border-[var(--border)] px-3 py-1 text-sm text-muted transition hover:bg-black/5 hover:text-app dark:hover:bg-white/10"
-        >
-          Close
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-[var(--border)] px-3 py-1 text-sm text-muted transition hover:bg-black/5 hover:text-app dark:hover:bg-white/10"
+          >
+            Close
+          </button>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => onAction(session, 'pin')}
+              className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-medium text-app transition hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              {session.is_pinned ? 'Unpin' : 'Pin'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onAction(session, 'ignore')}
+              className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-medium text-app transition hover:bg-black/5 dark:hover:bg-white/10"
+              title="Hide only. Does not stop processes or delete files."
+            >
+              {session.is_ignored ? 'Restore' : 'Ignore'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3">
@@ -173,23 +197,6 @@ export function SessionDetailPanel({
         <ProcessTree tree={session.root_process} />
       </section>
 
-      <div className="-mx-5 mt-5 flex gap-2 border-t border-[var(--border)] bg-[var(--surface-strong)] px-5 py-4">
-        <button
-          type="button"
-          onClick={() => onAction(session, 'pin')}
-          className="flex-1 rounded-full border border-[var(--border)] px-3 py-2 text-sm font-medium text-app transition hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          {session.is_pinned ? 'Unpin' : 'Pin'}
-        </button>
-        <button
-          type="button"
-          onClick={() => onAction(session, 'ignore')}
-          className="flex-1 rounded-full border border-[var(--border)] px-3 py-2 text-sm font-medium text-app transition hover:bg-black/5 dark:hover:bg-white/10"
-          title="Hide only. Does not stop processes or delete files."
-        >
-          {session.is_ignored ? 'Restore' : 'Ignore'}
-        </button>
-      </div>
     </aside>
   )
 }

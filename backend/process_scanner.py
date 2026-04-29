@@ -948,6 +948,7 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
     for session in sessions:
         cwd = session.cwd if session.cwd != "unknown" else ""
         root = session.root_process
+        session.task_id = session.session_id
         session.root_pid = root.pid
         session.root_cmd = " ".join(root.cmdline) if root.cmdline else root.name
         session.user = root.user
@@ -985,6 +986,9 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
                 agent_type, cwd, root.create_time
             )
             if session_data:
+                parsed_session_id = session_data.get("session_id")
+                if parsed_session_id:
+                    session.task_id = str(parsed_session_id)
                 session.heartbeat_ts = session_data.get("heartbeat_ts")
                 session.recent_output = redact_sensitive_text(session_data.get("recent_output", ""))
                 session.pending_items = session_data.get("pending_items", [])
