@@ -155,6 +155,10 @@ make clean     # Clean build artifacts
 
 See [SECURITY.md](SECURITY.md) for the full threat model.
 
+## Acknowledgements
+
+AgentDeck is inspired by and built upon ideas from [agent-foreman](https://github.com/operoncao123/agent-foreman) by [operoncao123](https://github.com/operoncao123). Thank you for the original concept and foundation.
+
 ---
 
 <details>
