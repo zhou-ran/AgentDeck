@@ -83,3 +83,19 @@ class TestCheckErrorHint:
 
     def test_none_path(self):
         assert check_error_hint(None) is False
+
+    def test_uses_chunked_log_tail(self, tmp_path: Path, monkeypatch):
+        log_path = tmp_path / "large.log"
+        log_path.write_text("ignored\n")
+
+        called = {}
+
+        def fake_tail(path: Path, lines: int):
+            called["path"] = path
+            called["lines"] = lines
+            return ["ERROR from tail"]
+
+        monkeypatch.setattr("backend.state_machine.get_log_tail", fake_tail)
+
+        assert check_error_hint(log_path) is True
+        assert called == {"path": log_path, "lines": 50}

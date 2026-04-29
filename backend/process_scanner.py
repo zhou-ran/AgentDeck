@@ -316,6 +316,27 @@ _prev_net = None
 _prev_net_time = 0.0
 
 
+def _disk_identity(path: str) -> tuple[str, str]:
+    """Return a stable de-duplication key and display mount point for a path."""
+    try:
+        resolved = os.path.realpath(path)
+        partitions = sorted(
+            psutil.disk_partitions(all=False),
+            key=lambda p: len(p.mountpoint),
+            reverse=True,
+        )
+        for part in partitions:
+            mount = os.path.realpath(part.mountpoint)
+            try:
+                if os.path.commonpath([resolved, mount]) == mount:
+                    return part.device or mount, part.mountpoint
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return os.path.realpath(path), path
+
+
 def get_system_metrics(project_dirs: list[str] | None = None) -> SystemMetrics:
     """Collect system-wide resource metrics."""
     global _prev_net, _prev_net_time
@@ -333,9 +354,9 @@ def get_system_metrics(project_dirs: list[str] | None = None) -> SystemMetrics:
         for d in project_dirs:
             try:
                 usage = psutil.disk_usage(d)
-                mount = d
-                if mount not in seen_mounts:
-                    seen_mounts.add(mount)
+                disk_key, mount = _disk_identity(d)
+                if disk_key not in seen_mounts:
+                    seen_mounts.add(disk_key)
                     disk_usages.append({
                         "path": mount,
                         "total_gb": round(usage.total / (1024**3), 1),

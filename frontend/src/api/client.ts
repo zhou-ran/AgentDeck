@@ -1,11 +1,38 @@
 import type { Task, ProcessInfo, DiscoveredSession, LogResponse } from '../types'
 
 const BASE = '/api'
+const TOKEN_STORAGE_KEY = 'agentstatus.token'
+
+export function getAuthToken(): string {
+  try {
+    const queryToken = new URLSearchParams(window.location.search).get('token')
+    if (queryToken) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, queryToken)
+      return queryToken
+    }
+    return localStorage.getItem(TOKEN_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+export function authHeaders(): HeadersInit {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+function mergeHeaders(init?: RequestInit): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    ...authHeaders(),
+    ...(init?.headers || {}),
+  }
+}
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: mergeHeaders(init),
   })
   if (!res.ok) {
     const text = await res.text()
@@ -31,7 +58,7 @@ export const api = {
   }) => fetchJson<Task>('/tasks', { method: 'POST', body: JSON.stringify(body) }),
 
   deleteTask: (id: string) =>
-    fetch(`${BASE}/tasks/${id}`, { method: 'DELETE' }),
+    fetch(`${BASE}/tasks/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
   stopTask: (id: string) => fetchJson<Task>(`/tasks/${id}/stop`, { method: 'POST' }),
 

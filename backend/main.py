@@ -4,6 +4,7 @@ import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -27,7 +28,19 @@ async def lifespan(app: FastAPI):
     # Prime psutil cpu_percent (first call returns 0)
     import psutil
     psutil.cpu_percent(interval=0)
-    yield
+
+    async def cleanup_rate_limiter() -> None:
+        while True:
+            await asyncio.sleep(60)
+            api_rate_limiter.cleanup()
+
+    cleanup_task = asyncio.create_task(cleanup_rate_limiter())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 app = FastAPI(

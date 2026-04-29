@@ -144,3 +144,19 @@ class TestRateLimiter:
         limiter = RateLimiter(max_requests=1, window_seconds=60)
         limiter.is_allowed("client1")
         assert limiter.is_allowed("client2") is True
+
+    def test_cleanup_removes_stale_keys(self):
+        limiter = RateLimiter(max_requests=3, window_seconds=60)
+        limiter._requests["stale"] = [1.0]
+        limiter._requests["active"] = [10_000.0]
+
+        import backend.security as security
+        original_time = security.time.time
+        security.time.time = lambda: 10_030.0
+        try:
+            limiter.cleanup()
+        finally:
+            security.time.time = original_time
+
+        assert "stale" not in limiter._requests
+        assert "active" in limiter._requests

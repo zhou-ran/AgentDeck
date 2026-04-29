@@ -11,6 +11,7 @@ from backend.models import (
     NoteAdd,
     Task,
     TaskCreate,
+    TaskStatus,
     PlanImport,
     StepUpdate,
     TaskComplete,
@@ -112,7 +113,7 @@ async def api_stop_task(task_id: str):
     except PermissionError:
         raise HTTPException(403, "Permission denied to stop process")
 
-    task.status = "completed"
+    task.status = TaskStatus.completed
     task.ended_at = datetime.now()
     save_task(task)
     return task

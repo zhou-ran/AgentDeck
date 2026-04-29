@@ -4,17 +4,14 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from backend.log_manager import get_log_tail
 from backend.models import Task, TaskStatus
 
 _ERROR_RE = re.compile(r"(Traceback|ERROR|Failed|Exception)", re.IGNORECASE)
 
 
 def _log_tail(path: Path, lines: int = 50) -> str:
-    try:
-        text = path.read_text(errors="replace")
-        return "\n".join(text.splitlines()[-lines:])
-    except (FileNotFoundError, PermissionError):
-        return ""
+    return "\n".join(get_log_tail(path, lines=lines))
 
 
 def check_error_hint(log_path: Path | None) -> bool:

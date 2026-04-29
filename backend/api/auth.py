@@ -6,6 +6,8 @@ For LAN access, require Bearer token.
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import Depends, HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -33,7 +35,8 @@ def require_token():
             return
 
         token = get_token()
-        if not credentials or credentials.credentials != token:
+        supplied_token = credentials.credentials if credentials else request.query_params.get("token", "")
+        if not supplied_token or not secrets.compare_digest(supplied_token, token):
             raise HTTPException(status_code=401, detail="Invalid or missing token")
 
     return Depends(_check)

@@ -17,10 +17,6 @@ export function Dashboard({ tasks, discovered, systemMetrics, connected }: {
   const [search, setSearch] = useState('')
   const [runningOnly, setRunningOnly] = useState(false)
 
-  if (selected) {
-    return <TaskDetail task={selected} onBack={() => setSelected(null)} />
-  }
-
   const filtered = useMemo(() => {
     let result = tasks
 
@@ -45,6 +41,13 @@ export function Dashboard({ tasks, discovered, systemMetrics, connected }: {
 
     return result
   }, [tasks, filterStatuses, search, runningOnly])
+  const selectedTask = selected
+    ? tasks.find(t => t.task_id === selected.task_id) || selected
+    : null
+
+  if (selectedTask) {
+    return <TaskDetail task={selectedTask} onBack={() => setSelected(null)} />
+  }
 
   const active = filtered.filter(t =>
     ['running', 'idle', 'waiting_input'].includes(t.status)

@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from pathlib import Path
 
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from backend.task_manager import list_tasks, _log_path
+from backend.models import DiscoveredSession
+from backend.task_manager import get_task_log_metadata, list_tasks
 from backend.process_scanner import (
     discover_sessions,
     get_resource_metrics,
@@ -19,6 +19,20 @@ from backend.process_scanner import (
 )
 
 router = APIRouter(tags=["sse"])
+
+_DISCOVERY_TTL_SECONDS = 10
+_discovery_cache: list[DiscoveredSession] = []
+_discovery_cache_ts = 0.0
+
+
+def _get_discovered_sessions_cached() -> list[DiscoveredSession]:
+    global _discovery_cache, _discovery_cache_ts
+
+    now = time.time()
+    if now - _discovery_cache_ts >= _DISCOVERY_TTL_SECONDS:
+        _discovery_cache = discover_sessions()
+        _discovery_cache_ts = now
+    return _discovery_cache
 
 
 @router.get("/events")
@@ -33,14 +47,7 @@ async def api_stream():
 
             for t in tasks:
                 task_dict = t.model_dump(mode="json")
-                # Attach live log metadata
-                log_p = _log_path(t.task_id)
-                if log_p.exists():
-                    task_dict["log_size"] = log_p.stat().st_size
-                    task_dict["log_mtime"] = log_p.stat().st_mtime
-                else:
-                    task_dict["log_size"] = 0
-                    task_dict["log_mtime"] = 0
+                task_dict.update(get_task_log_metadata(t.task_id))
 
                 # Attach resource metrics for running tasks
                 if t.pid and t.status in ("running", "idle"):
@@ -62,7 +69,7 @@ async def api_stream():
             cleanup_history(active_pids)
 
             # Discovered sessions
-            sessions = discover_sessions()
+            sessions = _get_discovered_sessions_cached()
             sessions_data = [s.model_dump(mode="json") for s in sessions]
 
             # System metrics

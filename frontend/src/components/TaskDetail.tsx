@@ -13,21 +13,22 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
   const [taskData, setTaskData] = useState(task)
 
   useEffect(() => {
+    let mounted = true
     const load = async () => {
-      try {
-        const [logData, treeData, freshTask] = await Promise.all([
-          api.getLog(task.task_id, 80).catch(() => null),
-          api.getProcessTree(task.task_id).catch(() => null),
-          api.getTask(task.task_id).catch(() => task),
-        ])
-        if (logData) setLog(logData)
-        if (treeData) setTree(treeData)
-        setTaskData(freshTask)
-      } catch {}
+      const [logData, treeData] = await Promise.all([
+        api.getLog(task.task_id, 80).catch(() => null),
+        api.getProcessTree(task.task_id).catch(() => null),
+      ])
+      if (!mounted) return
+      if (logData) setLog(logData)
+      if (treeData) setTree(treeData)
     }
     load()
     const iv = setInterval(load, 3000)
-    return () => clearInterval(iv)
+    return () => {
+      mounted = false
+      clearInterval(iv)
+    }
   }, [task.task_id])
 
   // Update taskData from SSE props
@@ -38,8 +39,6 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
   const handleStop = async () => {
     if (!confirm('Stop this task?')) return
     await api.stopTask(task.task_id)
-    const fresh = await api.getTask(task.task_id)
-    setTaskData(fresh)
   }
 
   const currentStep = taskData.plan.find(s => s.id === taskData.current_step_id)
