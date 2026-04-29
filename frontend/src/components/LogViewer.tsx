@@ -1,5 +1,12 @@
 import { useEffect, useRef } from 'react'
 
+function redact(line: string): string {
+  return line
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'sk-...[redacted]')
+    .replace(/\b(api[_-]?key\s*=\s*)[^\s]+/gi, '$1[redacted]')
+    .replace(/\b(authorization\s*:\s*bearer\s+)[^\s]+/gi, '$1[redacted]')
+}
+
 export function LogViewer({ lines, height = '300px' }: { lines: string[]; height?: string }) {
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -17,8 +24,9 @@ export function LogViewer({ lines, height = '300px' }: { lines: string[]; height
           <span className="text-gray-500">No log output</span>
         ) : (
           lines.map((line, i) => {
-            const isError = /error|traceback|failed|fatal|exception/i.test(line)
-            const isWarning = /warn/i.test(line)
+            const safeLine = redact(line)
+            const isError = /error|traceback|failed|fatal|exception/i.test(safeLine)
+            const isWarning = /warn/i.test(safeLine)
             return (
               <div
                 key={i}
@@ -26,7 +34,7 @@ export function LogViewer({ lines, height = '300px' }: { lines: string[]; height
                   isError ? 'text-red-400' : isWarning ? 'text-yellow-400' : 'text-gray-300'
                 }`}
               >
-                {line}
+                {safeLine}
               </div>
             )
           })

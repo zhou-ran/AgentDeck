@@ -1,8 +1,8 @@
-# Security — AgentStatus
+# Security — AgentDeck
 
 ## Threat Model
 
-AgentStatus runs on a shared Linux server where multiple users may have login access, and coding agents may handle sensitive data (API keys, SSH keys, research data). The primary attack surface is the web dashboard.
+AgentDeck runs on a shared Linux server where multiple users may have login access, and coding agents may handle sensitive data (API keys, SSH keys, research data). The primary attack surface is the web dashboard.
 
 ### Assets to Protect
 
@@ -108,7 +108,7 @@ AgentStatus runs on a shared Linux server where multiple users may have login ac
 # Option 1: Environment variable (recommended for scripts)
 export AGENT_FOREMAN_TOKEN="your-secret-token"
 
-# Option 2: Config file (~/.agent_foreman_local/config.yaml)
+# Option 2: Config file (~/.agentdeck/config.yaml)
 token: your-secret-token
 
 # Option 3: Auto-generated (first run)
@@ -119,16 +119,16 @@ token: your-secret-token
 
 ```bash
 # Localhost only (default, recommended)
-agent-foreman-local serve
+agentdeck serve
 
 # LAN access (requires token)
-agent-foreman-local serve --host 0.0.0.0 --port 9797
+agentdeck serve --host 0.0.0.0 --port 8790
 # Token will be printed to stdout
 ```
 
 ## Residual Risks
 
-1. **Token in config file**: Token stored in plaintext in `~/.agent_foreman_local/config.yaml`. Mitigate by setting `AGENT_FOREMAN_TOKEN` env var instead.
+1. **Token in config file**: Token stored in plaintext in `~/.agentdeck/config.yaml`. Mitigate by setting `AGENT_FOREMAN_TOKEN` env var instead.
 
 2. **Localhost auth bypass**: Dashboard access from localhost has no auth. On shared servers, any local user can access the dashboard. Mitigate by binding to a Unix socket with filesystem permissions.
 

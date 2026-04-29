@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 
-DEFAULT_CONFIG_DIR = Path.home() / ".agent_foreman_local"
+DEFAULT_CONFIG_DIR = Path.home() / ".agentdeck"
 DEFAULT_TASKS_DIR = DEFAULT_CONFIG_DIR / "tasks"
 DEFAULT_LOGS_DIR = Path.home() / "agent_logs"
 DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.yaml"

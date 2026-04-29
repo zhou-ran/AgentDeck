@@ -1,4 +1,4 @@
-"""Security helpers for AgentStatus.
+"""Security helpers for AgentDeck.
 
 Provides:
 - Path traversal prevention

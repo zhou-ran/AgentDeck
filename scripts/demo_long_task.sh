@@ -8,7 +8,7 @@ DURATION="${2:-60}"
 echo "Starting demo long task: $TASK_NAME (duration: ${DURATION}s)"
 echo ""
 
-agent-foreman-local start "$TASK_NAME" \
+agentdeck start "$TASK_NAME" \
   --dir "$(pwd)" \
   --goal "Demonstrate long-running task monitoring" \
   --feature "demo" \
@@ -24,7 +24,7 @@ agent-foreman-local start "$TASK_NAME" \
 
 echo ""
 echo "Task started. Watch with:"
-echo "  agent-foreman-local tail $TASK_NAME -f"
+echo "  agentdeck tail $TASK_NAME -f"
 echo ""
 echo "Or open the dashboard:"
-echo "  agent-foreman-local serve"
+echo "  agentdeck serve"

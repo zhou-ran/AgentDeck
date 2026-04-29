@@ -1,7 +1,7 @@
-import type { Task, ProcessInfo, DiscoveredSession, LogResponse } from '../types'
+import type { Task, ProcessInfo, DiscoveredSession, LogResponse, Rule } from '../types'
 
 const BASE = '/api'
-const TOKEN_STORAGE_KEY = 'agentstatus.token'
+const TOKEN_STORAGE_KEY = 'agentdeck.token'
 
 export function getAuthToken(): string {
   try {
@@ -104,5 +104,26 @@ export const api = {
 
   getProcessTree: (id: string) => fetchJson<ProcessInfo>(`/tasks/${id}/process-tree`),
 
-  discover: () => fetchJson<{ count: number; sessions: DiscoveredSession[] }>('/discover'),
+  discover: (includeIgnored = false) =>
+    fetchJson<{ count: number; sessions: DiscoveredSession[] }>(`/discover?include_ignored=${includeIgnored ? 'true' : 'false'}`),
+
+  listPins: () => fetchJson<{ version: number; rules: Rule[] }>('/pins'),
+  createPin: (body: { type: string; value: string; note?: string }) =>
+    fetchJson<Rule>('/pins', { method: 'POST', body: JSON.stringify(body) }),
+  deletePin: (id: string) =>
+    fetch(`${BASE}/pins/${id}`, { method: 'DELETE', headers: authHeaders() }),
+
+  listIgnored: (includeInactive = false) =>
+    fetchJson<{ version: number; rules: Rule[] }>(`/ignored?include_inactive=${includeInactive ? 'true' : 'false'}`),
+  createIgnored: (body: { type: string; value: string; note?: string }) =>
+    fetchJson<Rule>('/ignored', { method: 'POST', body: JSON.stringify(body) }),
+  deleteIgnored: (id: string) =>
+    fetch(`${BASE}/ignored/${id}`, { method: 'DELETE', headers: authHeaders() }),
+  restoreIgnored: (id: string) =>
+    fetchJson<{ ok: boolean }>(`/ignored/${id}/restore`, { method: 'POST' }),
+
+  pinSession: (id: string) => fetchJson<Rule>(`/sessions/${id}/pin`, { method: 'POST' }),
+  unpinSession: (id: string) => fetchJson<{ ok: boolean; removed: boolean }>(`/sessions/${id}/unpin`, { method: 'POST' }),
+  ignoreSession: (id: string) => fetchJson<Rule>(`/sessions/${id}/ignore`, { method: 'POST' }),
+  unignoreSession: (id: string) => fetchJson<{ ok: boolean; restored: boolean }>(`/sessions/${id}/unignore`, { method: 'POST' }),
 }

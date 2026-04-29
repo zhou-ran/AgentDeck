@@ -1,4 +1,4 @@
-"""systemd user service management for AgentStatus."""
+"""systemd user service management for AgentDeck."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-SERVICE_NAME = "agent-foreman-local"
+SERVICE_NAME = "agentdeck"
 
 SERVICE_TEMPLATE = """\
 [Unit]
-Description=AgentStatus — Local Coding Agent Supervisor Dashboard
+Description=AgentDeck — Local Coding Agent Supervisor Dashboard
 After=network.target
 
 [Service]
@@ -122,11 +122,11 @@ def uninstall_service() -> tuple[bool, str]:
 
 
 def _find_executable() -> str:
-    """Find the agent-foreman-local executable path."""
-    path = shutil.which("agent-foreman-local")
+    """Find the agentdeck executable path."""
+    path = shutil.which("agentdeck")
     if path:
         return path
     path = shutil.which("agentctl")
     if path:
         return path
-    return str(Path(sys.executable).parent / "agent-foreman-local")
+    return str(Path(sys.executable).parent / "agentdeck")

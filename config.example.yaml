@@ -1,5 +1,5 @@
-# AgentStatus Configuration
-# Located at: ~/.agent_foreman_local/config.yaml
+# AgentDeck Configuration
+# Located at: ~/.agentdeck/config.yaml
 
 # Server binding
 host: "127.0.0.1"    # Use "0.0.0.0" for LAN access
@@ -10,4 +10,4 @@ port: 9797
 
 # Directories
 log_dir: "~/agent_logs"
-tasks_dir: "~/.agent_foreman_local/tasks"
+tasks_dir: "~/.agentdeck/tasks"

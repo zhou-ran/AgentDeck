@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import time
 
 from fastapi import APIRouter
@@ -85,6 +86,13 @@ async def api_stream():
                     "tasks": data,
                     "discovered": sessions_data,
                     "system": sys_metrics,
+                    "scan": {
+                        "hostname": socket.gethostname(),
+                        "last_scan_time": _discovery_cache_ts,
+                        "scan_interval": 2,
+                        "discovery_ttl": _DISCOVERY_TTL_SECONDS,
+                        "active_sessions_count": len(sessions),
+                    },
                 }, default=str),
             }
             await asyncio.sleep(2)

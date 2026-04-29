@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import type { Task, DiscoveredSession, SystemMetrics } from '../types'
+import type { Task, DiscoveredSession, ScanMeta, SystemMetrics } from '../types'
 import { getAuthToken } from '../api/client'
 
 export function useSSE() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [discovered, setDiscovered] = useState<DiscoveredSession[]>([])
   const [systemMetrics, setSystemMetrics] = useState<SystemMetrics | null>(null)
+  const [scanMeta, setScanMeta] = useState<ScanMeta | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState('')
   const esRef = useRef<EventSource | null>(null)
@@ -25,6 +26,9 @@ export function useSSE() {
           setDiscovered(data.discovered || [])
           if (data.system) {
             setSystemMetrics(data.system)
+          }
+          if (data.scan) {
+            setScanMeta(data.scan)
           }
         } else if (Array.isArray(data)) {
           setTasks(data)
@@ -56,5 +60,5 @@ export function useSSE() {
     }
   }, [connect])
 
-  return { tasks, discovered, systemMetrics, connected, error }
+  return { tasks, discovered, systemMetrics, scanMeta, connected, error }
 }

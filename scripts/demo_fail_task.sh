@@ -7,7 +7,7 @@ TASK_NAME="${1:-demo-fail-task}"
 echo "Starting demo failing task: $TASK_NAME"
 echo ""
 
-agent-foreman-local start "$TASK_NAME" \
+agentdeck start "$TASK_NAME" \
   --dir "$(pwd)" \
   --goal "Demonstrate failure detection" \
   --feature "demo" \
@@ -28,7 +28,7 @@ agent-foreman-local start "$TASK_NAME" \
 
 echo ""
 echo "Task started (will fail in ~5 seconds). Watch with:"
-echo "  agent-foreman-local tail $TASK_NAME -f"
+echo "  agentdeck tail $TASK_NAME -f"
 echo ""
 echo "Check status:"
-echo "  agent-foreman-local status $TASK_NAME"
+echo "  agentdeck status $TASK_NAME"
