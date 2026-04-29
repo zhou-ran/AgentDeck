@@ -26,6 +26,26 @@ _discovery_cache: list[DiscoveredSession] = []
 _discovery_cache_ts = 0.0
 
 
+def _collect_project_dirs(tasks: list[object], sessions: list[DiscoveredSession]) -> list[str]:
+    """Collect real project directories for disk metrics from tasks and discovered sessions."""
+    project_dirs = {t.project_dir for t in tasks if getattr(t, "project_dir", "")}
+
+    for session in sessions:
+        project_name = getattr(session, "project_name", None)
+        project = getattr(session, "project", None)
+        for candidate in (
+            getattr(session, "project_root", ""),
+            getattr(project_name, "git_root", ""),
+            getattr(project, "project_dir", ""),
+            getattr(session, "cwd", ""),
+        ):
+            if candidate and candidate != "unknown":
+                project_dirs.add(candidate)
+                break
+
+    return sorted(project_dirs)
+
+
 def _get_discovered_sessions_cached() -> list[DiscoveredSession]:
     global _discovery_cache, _discovery_cache_ts
 
@@ -77,7 +97,7 @@ async def api_stream():
             sessions_data = [s.model_dump(mode="json") for s in sessions]
 
             # System metrics
-            project_dirs = list({t.project_dir for t in tasks if t.project_dir} | {s.project.project_dir for s in sessions if s.project.project_dir})
+            project_dirs = _collect_project_dirs(tasks, sessions)
             sys_metrics = get_system_metrics(project_dirs).model_dump()
 
             yield {
@@ -104,5 +124,5 @@ async def api_stream():
 async def api_system_metrics():
     """Get system-wide resource metrics (CPU, memory, disk, network)."""
     tasks = list_tasks()
-    project_dirs = list({t.project_dir for t in tasks if t.project_dir})
+    project_dirs = _collect_project_dirs(tasks, [])
     return get_system_metrics(project_dirs).model_dump()
