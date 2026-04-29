@@ -9,6 +9,7 @@ from collections import namedtuple
 from backend.models import ProcessInfo
 from backend.process_scanner import (
     AUTO_HIDE_INACTIVE_SECONDS,
+    STALE_INACTIVE_SECONDS,
     discover_agent_processes,
     discover_sessions,
     get_system_metrics,
@@ -140,23 +141,33 @@ class TestAutoIgnorePolicy:
 
         assert reason == "other user: bob"
 
-    def test_heartbeat_older_than_two_hours_is_auto_ignored(self):
+    def test_heartbeat_older_than_two_hours_is_not_auto_ignored(self):
         session = _session_for_policy(user="alice")
-        session.heartbeat_ts = time.time() - AUTO_HIDE_INACTIVE_SECONDS - 1
-        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.heartbeat_ts = time.time() - STALE_INACTIVE_SECONDS - 1
+        session.heartbeat_age_sec = STALE_INACTIVE_SECONDS + 1
 
         reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
 
-        assert reason == "inactive for more than 2 hours"
+        assert reason == ""
 
-    def test_long_running_without_visible_activity_is_auto_ignored(self):
+    def test_six_hour_heartbeat_without_visible_activity_is_auto_ignored(self):
+        session = _session_for_policy(user="alice")
+        session.heartbeat_ts = time.time() - AUTO_HIDE_INACTIVE_SECONDS - 1
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.cpu_percent = 0.1
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == "no visible activity for more than 6 hours"
+
+    def test_long_running_without_visible_activity_is_auto_ignored_after_six_hours(self):
         session = _session_for_policy(user="alice")
         session.elapsed_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
         session.cpu_percent = 0.1
 
         reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
 
-        assert reason == "no visible activity for more than 2 hours"
+        assert reason == "no visible activity for more than 6 hours"
 
     def test_recent_work_keeps_long_running_session_visible(self):
         session = _session_for_policy(user="alice")
@@ -164,6 +175,44 @@ class TestAutoIgnorePolicy:
         session.cpu_percent = 0.1
 
         reason = _auto_ignore_reason(session, server_user="alice", recent_files=["backend/main.py"])
+
+        assert reason == ""
+
+    def test_pinned_session_is_never_auto_ignored_for_inactivity(self):
+        session = _session_for_policy(user="alice")
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.is_pinned = True
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == ""
+
+    def test_waiting_session_is_not_auto_ignored_for_inactivity(self):
+        session = _session_for_policy(user="alice")
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.status = "needs_input"
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == ""
+
+    def test_failed_session_is_not_auto_ignored_for_inactivity(self):
+        session = _session_for_policy(user="alice")
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.status = "failed"
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
+
+        assert reason == ""
+
+    def test_background_job_session_is_not_auto_ignored_for_inactivity(self):
+        from backend.models import BackgroundJob
+
+        session = _session_for_policy(user="alice")
+        session.heartbeat_age_sec = AUTO_HIDE_INACTIVE_SECONDS + 1
+        session.background_jobs = [BackgroundJob(pid=20, ppid=10, cmd="npm run dev", job_type="dev_server", status="running")]
+
+        reason = _auto_ignore_reason(session, server_user="alice", recent_files=[])
 
         assert reason == ""
 

@@ -151,6 +151,13 @@ export interface ActivityTimelineItem {
   detail: string
 }
 
+export interface ConversationMessage {
+  role: string
+  text: string
+  ts: number | null
+  source: string
+}
+
 export interface Task {
   task_id: string
   name: string
@@ -258,6 +265,7 @@ export interface DiscoveredSession {
   recent_output: string
   pending_items: string[]
   last_user_message: string
+  conversation: ConversationMessage[]
   source_file: string
   confidence: number
 

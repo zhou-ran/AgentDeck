@@ -16,6 +16,7 @@ export function AppShell({
   connected,
   scanMeta,
   sidebarStats,
+  demoMode = false,
   children,
 }: {
   activeView: ViewKey
@@ -30,6 +31,7 @@ export function AppShell({
   connected: boolean
   scanMeta: ScanMeta | null
   sidebarStats?: ReactNode
+  demoMode?: boolean
   children: ReactNode
 }) {
   return (
@@ -50,6 +52,7 @@ export function AppShell({
           onOpenPalette={onOpenPalette}
           connected={connected}
           scanMeta={scanMeta}
+          demoMode={demoMode}
         />
         <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-5 lg:px-6">
           {children}

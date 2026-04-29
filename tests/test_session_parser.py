@@ -157,6 +157,13 @@ class TestParseCodexSession:
         # Should have pending items from the plan update
         assert len(result["pending_items"]) > 0
 
+    def test_conversation_excerpt(self, codex_session_file: Path):
+        result = parse_codex_session(codex_session_file)
+        assert result is not None
+        roles = [item["role"] for item in result["conversation"]]
+        assert "assistant" in roles
+        assert "user" in roles
+
     def test_empty_file(self, tmp_path: Path):
         f = tmp_path / "empty.jsonl"
         f.write_text("")
@@ -206,6 +213,12 @@ class TestParseClaudeSession:
         assert result is not None
         assert "auth-project" in (result["cwd"] or "")
 
+    def test_conversation_excerpt(self, claude_session_file: Path):
+        result = parse_claude_session(claude_session_file)
+        assert result is not None
+        assert result["conversation"][0]["role"] == "user"
+        assert any(item["role"] == "assistant" for item in result["conversation"])
+
 
 # ---- Test parse_kimi_session ----
 
@@ -225,6 +238,11 @@ class TestParseKimiSession:
         result = parse_kimi_session(kimi_session_file)
         assert result is not None
         assert len(result["last_user_message"]) > 0
+
+    def test_conversation_excerpt(self, kimi_session_file: Path):
+        result = parse_kimi_session(kimi_session_file)
+        assert result is not None
+        assert [item["role"] for item in result["conversation"]] == ["user", "assistant"]
 
 
 # ---- Test discover_session_files ----
