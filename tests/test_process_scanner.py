@@ -12,8 +12,10 @@ from backend.process_scanner import (
     STALE_INACTIVE_SECONDS,
     discover_agent_processes,
     discover_sessions,
+    extract_user_instruction,
     get_system_metrics,
     is_process_alive,
+    _candidate_log_files,
     _auto_ignore_reason,
     _format_elapsed,
     _same_user,
@@ -69,6 +71,36 @@ class TestSystemMetrics:
 
         assert len(metrics.disk_usages) == 1
         assert metrics.disk_usages[0]["path"] == "/data"
+
+
+class TestSessionInstructionSources:
+    def test_session_data_without_user_message_does_not_fall_back_to_logs(self, tmp_path):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir(exist_ok=True)
+        (log_dir / "session.log").write_text("Instruction: wrong session\n", encoding="utf-8")
+
+        instruction = extract_user_instruction(
+            str(tmp_path),
+            "codex",
+            {"source_file": "/home/user/.codex/sessions/current.jsonl"},
+        )
+
+        assert instruction.text == "未找到原始指令"
+        assert instruction.source == ""
+
+    def test_global_agent_logs_are_not_project_candidates_by_default(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        global_logs = home / "agent_logs"
+        global_logs.mkdir(parents=True)
+        global_log = global_logs / "other-session.log"
+        global_log.write_text("Instruction: other session\n", encoding="utf-8")
+        project = tmp_path / "project"
+        project.mkdir()
+
+        monkeypatch.setattr("backend.process_scanner.Path.home", lambda: home)
+
+        assert global_log not in _candidate_log_files(str(project))
+        assert global_log in _candidate_log_files(str(project), include_global=True)
 
 
 class TestDiscoverAgentProcesses:

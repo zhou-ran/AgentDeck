@@ -525,7 +525,7 @@ def _recent_modified_files(cwd: str, seconds: int = 60) -> list[str]:
     return modified[:20]  # Cap at 20
 
 
-def _candidate_log_files(project_dir: str) -> list[Path]:
+def _candidate_log_files(project_dir: str, include_global: bool = False) -> list[Path]:
     """Find candidate log files for a project."""
     candidates = []
     roots: list[Path] = []
@@ -536,7 +536,8 @@ def _candidate_log_files(project_dir: str) -> list[Path]:
         if git_root:
             gp = Path(git_root)
             roots.extend([gp / "logs", gp / ".codex", gp / ".claude", gp / ".kimi", gp / ".kimi-code"])
-    roots.append(Path.home() / "agent_logs")
+    if include_global:
+        roots.append(Path.home() / "agent_logs")
 
     seen: set[Path] = set()
     for root in roots:
@@ -550,7 +551,7 @@ def _candidate_log_files(project_dir: str) -> list[Path]:
         try:
             for pattern in ("*.log", "*.jsonl"):
                 for f in root.rglob(pattern):
-                    if f.is_file():
+                    if f.is_file() and "subagents" not in f.parts:
                         candidates.append(f)
         except PermissionError:
             pass
@@ -590,8 +591,11 @@ def extract_user_instruction(
             source_file=session_data.get("source_file", ""),
             confidence=0.9,
         )
+    if session_data:
+        return InstructionInfo(text="未找到原始指令", source="", source_file="", confidence=0.0)
 
-    # 2. Log files
+    # 2. Project-local log files. Global agent_logs is intentionally not used
+    # for discovered sessions because it is not tied to a process/session.
     log_files = _candidate_log_files(project_dir)
     for log_file in log_files[:5]:
         try:
@@ -1029,7 +1033,7 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
         session.user_instruction = redact_sensitive_text(instruction.text)
         session.instruction_source = instruction.source
         session.instruction_confidence = instruction.confidence
-        session.source_file = instruction.source_file or (session_data or {}).get("source_file", "")
+        session.source_file = (session_data or {}).get("source_file", "")
         session.confidence = instruction.confidence
 
         # 7. Collect active commands and child processes

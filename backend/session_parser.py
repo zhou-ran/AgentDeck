@@ -24,6 +24,8 @@ SESSION_PATHS: dict[str, list[str]] = {
     "kimi-code": ["~/.kimi-code", "~/.kimi", "~/agent_logs"],
 }
 
+PROCESS_START_MATCH_WINDOW_SECONDS = 30 * 60
+
 
 def _safe_json_loads(s: str) -> Any:
     """Parse JSON string, returning None on failure."""
@@ -56,6 +58,16 @@ def _conversation_item(role: str, text: str | None, ts: float | None, source: st
     if not body:
         return None
     return {"role": role, "text": body, "ts": ts, "source": source}
+
+
+def _append_conversation_item(conversation: deque[dict[str, Any]], item: dict[str, Any] | None) -> None:
+    if not item:
+        return
+    if conversation:
+        previous = conversation[-1]
+        if previous.get("role") == item.get("role") and previous.get("text") == item.get("text"):
+            return
+    conversation.append(item)
 
 
 def _text_from_content(content: Any) -> str:
@@ -152,6 +164,8 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
         "git_branch": None,
     }
     tail: deque[str] = deque(maxlen=80)
+    last_user = ""
+    conversation: deque[dict[str, Any]] = deque(maxlen=10)
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             first = f.readline()
@@ -169,8 +183,25 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
                         _parse_iso_ts(obj.get("timestamp"))
                         or meta["heartbeat_ts"]
                     )
+                elif isinstance(obj, dict) and obj.get("type") == "event_msg":
+                    ep = obj.get("payload", {})
+                    if ep.get("type") == "user_message":
+                        last_user = ep.get("message", "") or last_user
+                        _append_conversation_item(conversation, _conversation_item("user", ep.get("message"), _parse_iso_ts(obj.get("timestamp"))))
                 tail.append(first)
             for line in f:
+                obj = _safe_json_loads(line)
+                if isinstance(obj, dict) and obj.get("type") == "event_msg":
+                    ep = obj.get("payload", {})
+                    if ep.get("type") == "user_message":
+                        last_user = ep.get("message", "") or last_user
+                        _append_conversation_item(conversation, _conversation_item("user", ep.get("message"), _parse_iso_ts(obj.get("timestamp"))))
+                    elif ep.get("type") == "agent_message":
+                        _append_conversation_item(conversation, _conversation_item("assistant", ep.get("message"), _parse_iso_ts(obj.get("timestamp"))))
+                elif isinstance(obj, dict) and obj.get("type") == "response_item":
+                    candidate = _extract_codex_message(obj.get("payload", {})) or ""
+                    if candidate and not candidate.startswith("tool:"):
+                        _append_conversation_item(conversation, _conversation_item("assistant", candidate, _parse_iso_ts(obj.get("timestamp"))))
                 tail.append(line)
     except Exception:
         return None
@@ -178,31 +209,7 @@ def parse_codex_session(path: Path) -> dict[str, Any] | None:
     pending: list[str] = []
     recent_text = ""
     recent_tool = ""
-    last_user = ""
     last_ts = meta["heartbeat_ts"]
-    conversation: deque[dict[str, Any]] = deque(maxlen=10)
-    for line in tail:
-        obj = _safe_json_loads(line)
-        if not isinstance(obj, dict):
-            continue
-        ts = _parse_iso_ts(obj.get("timestamp"))
-        if obj.get("type") == "event_msg":
-            ep = obj.get("payload", {})
-            if ep.get("type") == "user_message":
-                item = _conversation_item("user", ep.get("message"), ts)
-                if item:
-                    conversation.append(item)
-            elif ep.get("type") == "agent_message":
-                item = _conversation_item("assistant", ep.get("message"), ts)
-                if item:
-                    conversation.append(item)
-        elif obj.get("type") == "response_item":
-            payload = obj.get("payload", {})
-            candidate = _extract_codex_message(payload) or ""
-            role = "tool" if candidate.startswith("tool:") else "assistant"
-            item = _conversation_item(role, candidate, ts)
-            if item:
-                conversation.append(item)
     for line in reversed(tail):
         obj = _safe_json_loads(line)
         if not isinstance(obj, dict):
@@ -468,11 +475,11 @@ def discover_session_files(agent_type: str, project_dir: str) -> list[Path]:
         seen_roots.add(expanded)
         try:
             for f in expanded.rglob("*.jsonl"):
-                if f.is_file():
+                if f.is_file() and "subagents" not in f.parts:
                     candidates.append(f)
             # Also check for .log files (kimi)
             for f in expanded.rglob("*.log"):
-                if f.is_file():
+                if f.is_file() and "subagents" not in f.parts:
                     candidates.append(f)
         except PermissionError:
             continue
@@ -511,6 +518,25 @@ def _session_matches_project(session: dict[str, Any], cwd: str) -> bool:
     return _path_within(source_file, cwd)
 
 
+def _session_project_match_rank(session: dict[str, Any], cwd: str) -> int:
+    """Rank how directly a parsed session belongs to cwd.
+
+    Lower is better. A cwd embedded in the session is more trustworthy than a
+    project-local source file fallback, because local logs may contain helper
+    or copied session fragments.
+    """
+    s_cwd = session.get("cwd") or ""
+    if s_cwd:
+        if _norm_path(s_cwd) == _norm_path(cwd):
+            return 0
+        if _path_within(cwd, s_cwd) or _path_within(s_cwd, cwd):
+            return 1
+    source_file = session.get("source_file") or ""
+    if _path_within(source_file, cwd):
+        return 2
+    return 99
+
+
 def match_session_to_process(
     sessions: list[dict[str, Any]],
     cwd: str,
@@ -530,16 +556,35 @@ def match_session_to_process(
     if not pool:
         return None
 
+    def _heartbeat(s: dict[str, Any]) -> float:
+        return float(s.get("heartbeat_ts") or s.get("start_ts") or 0)
+
+    def _start(s: dict[str, Any]) -> float:
+        return float(s.get("start_ts") or 0)
+
     if start_ts and len(pool) > 1:
-        # Pick closest start_ts
-        def _ts_dist(s: dict[str, Any]) -> float:
-            s_ts = s.get("start_ts")
-            if s_ts is None:
-                return float("inf")
-            return abs(s_ts - start_ts)
+        timed = []
+        for item in pool:
+            item_start = item.get("start_ts")
+            if item_start is None:
+                continue
+            distance = abs(float(item_start) - start_ts)
+            if distance <= PROCESS_START_MATCH_WINDOW_SECONDS:
+                timed.append((distance, item))
 
-        pool.sort(key=_ts_dist)
+        if timed:
+            timed.sort(key=lambda pair: (
+                _session_project_match_rank(pair[1], cwd),
+                pair[0],
+                -_heartbeat(pair[1]),
+            ))
+            return timed[0][1]
 
+    pool.sort(key=lambda item: (
+        _session_project_match_rank(item, cwd),
+        -_heartbeat(item),
+        -_start(item),
+    ))
     return pool[0] if pool else None
 
 
