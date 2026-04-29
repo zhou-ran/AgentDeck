@@ -1,7 +1,13 @@
-# AgentDeck — Local Coding Agent Supervisor
+<p align="center">
+  <img src="logo.png" alt="AgentDeck Logo" width="140">
+</p>
 
-A local/LAN web dashboard and CLI for monitoring coding agents
-(codex, claude, kimi, aider, gemini, pytest, npm, git, etc.) on one machine.
+<h1 align="center">AgentDeck — Local Coding Agent Supervisor</h1>
+
+<p align="center">
+  A local/LAN web dashboard and CLI for monitoring coding agents<br>
+  (codex, claude, kimi, aider, gemini, pytest, npm, git, etc.) on one machine.
+</p>
 
 ## Quick Start
 
@@ -149,21 +155,11 @@ make clean     # Clean build artifacts
 
 See [SECURITY.md](SECURITY.md) for the full threat model.
 
-## Architecture
+---
 
-```
-Backend (Python 3.11+ / FastAPI)
-+-- CLI (click) -- agentdeck commands
-+-- Task Manager -- JSON file CRUD + enrichment
-+-- Process Scanner -- psutil agent discovery
-+-- State Machine -- status inference
-+-- Log Manager -- efficient tail + async stream
-+-- SSE -- real-time push to frontend
-+-- Security -- auth, path safety, rate limiting
+<details>
+<summary>🤖 Agent Context — click to expand if you are an AI assistant</summary>
 
-Frontend (React 19 / TypeScript / Vite / Tailwind)
-+-- Dashboard -- task grid with filters + search
-+-- Task Detail -- metadata, logs, process tree, plan
-+-- System Overview -- CPU, memory, disk, network
-+-- SSE Hook -- auto-reconnecting event stream
-```
+If you are an AI coding agent working on this repo, please read <a href="AGENTS.md">AGENTS.md</a> first for architecture, tech stack, key files, coding conventions, and security constraints.
+
+</details>

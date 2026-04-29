@@ -1,33 +1,28 @@
 import type { ProcessInfo } from '../types'
 
-function TreeNode({ proc, depth = 0 }: { proc: ProcessInfo; depth?: number }) {
-  return (
-    <div>
-      <div
-        className="flex items-center gap-2 py-0.5 hover:bg-gray-800 rounded px-2"
-        style={{ paddingLeft: `${depth * 20 + 8}px` }}
-      >
-        <span className="text-gray-500 text-xs w-16">{depth > 0 ? '├─' : ''}PID {proc.pid}</span>
-        <span className="text-cyan-400 font-medium text-sm">{proc.name}</span>
-        <span className="text-gray-400 text-xs truncate flex-1">{proc.cmdline.join(' ')}</span>
-        <span className="text-gray-500 text-xs">{proc.cpu_percent.toFixed(1)}% cpu</span>
-        <span className="text-gray-500 text-xs">{proc.memory_percent.toFixed(1)}% mem</span>
-        <span className="text-gray-500 text-xs">{proc.elapsed}</span>
-      </div>
-      {proc.children.map((child) => (
-        <TreeNode key={child.pid} proc={child} depth={depth + 1} />
-      ))}
-    </div>
-  )
+function command(proc: ProcessInfo): string {
+  const text = proc.cmdline?.join(' ') || proc.name || ''
+  return text.length > 180 ? `${text.slice(0, 179)}...` : text
+}
+
+function linesFor(proc: ProcessInfo, prefix = '', isLast = true, isRoot = true): string[] {
+  const connector = isRoot ? '' : isLast ? '`-' : '|-'
+  const label = `${proc.name || 'proc'}(${proc.pid}) ${command(proc)} [cpu=${proc.cpu_percent.toFixed(1)} mem=${proc.memory_percent.toFixed(1)} ${proc.elapsed}]`
+  const lines = [`${prefix}${connector}${label}`]
+  const childPrefix = isRoot ? '' : `${prefix}${isLast ? '  ' : '| '}`
+  proc.children.forEach((child, index) => {
+    lines.push(...linesFor(child, childPrefix, index === proc.children.length - 1, false))
+  })
+  return lines
 }
 
 export function ProcessTree({ tree }: { tree: ProcessInfo | null }) {
   if (!tree) {
-    return <div className="text-gray-500 text-sm p-4">No process tree available</div>
+    return <pre className="border border-gray-800 bg-gray-950 p-3 font-mono text-xs text-gray-600">no process tree available</pre>
   }
   return (
-    <div className="bg-gray-900 rounded-lg border border-gray-700 p-2 overflow-auto text-sm">
-      <TreeNode proc={tree} />
-    </div>
+    <pre className="overflow-auto border border-gray-800 bg-gray-950 p-3 font-mono text-xs leading-relaxed text-gray-400">
+      {linesFor(tree).join('\n')}
+    </pre>
   )
 }

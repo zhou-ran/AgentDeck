@@ -2,7 +2,7 @@ import { useSSE } from './hooks/useSSE'
 import { Dashboard } from './components/Dashboard'
 
 export default function App() {
-  const { tasks, discovered, systemMetrics, connected, error } = useSSE()
+  const { tasks, discovered, systemMetrics, scanMeta, connected, error } = useSSE()
 
   return (
     <div className="min-h-screen">
@@ -20,7 +20,7 @@ export default function App() {
             {error}
           </div>
         )}
-        <Dashboard tasks={tasks} discovered={discovered} systemMetrics={systemMetrics} connected={connected} />
+        <Dashboard tasks={tasks} discovered={discovered} systemMetrics={systemMetrics} scanMeta={scanMeta} connected={connected} />
       </main>
     </div>
   )

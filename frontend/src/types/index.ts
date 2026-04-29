@@ -83,6 +83,68 @@ export interface ProjectRuntimeStatus {
   recent_files: string[]
 }
 
+export interface AgentDetectionResult {
+  agent_type: string
+  confidence: number
+  reason: string
+  evidence: string[]
+}
+
+export interface ForegroundAgentInfo {
+  pid: number | null
+  cmd: string
+  tty: string | null
+  is_interactive: boolean
+  waiting_input: boolean
+  alive: boolean
+  last_activity_ts: number | null
+  last_tool: string
+  last_message_summary: string
+  status: string
+}
+
+export interface BackgroundJob {
+  pid: number
+  ppid: number
+  cmd: string
+  job_type: string
+  status: string
+  elapsed_sec: number | null
+  cpu: number
+  mem: number
+  cwd: string
+  summary: string
+  is_long_running: boolean
+  detected_from: string
+}
+
+export interface GitStatusDetail {
+  branch: string
+  dirty_count: number
+  changed_files: string[]
+  staged_count: number
+  unstaged_count: number
+  untracked_count: number
+  is_repo: boolean
+  command_failed: boolean
+}
+
+export interface ResourceUsage {
+  cpu_percent: number
+  memory_percent: number
+  rss_mb: number
+  children_count: number
+}
+
+export interface Rule {
+  id: string
+  type: string
+  value: string
+  created_at: string
+  note: string
+  active: boolean
+}
+
 export interface ActivityTimelineItem {
   ts: number
   event: string
@@ -140,6 +202,7 @@ export interface ProcessInfo {
   cmdline: string[]
   cwd: string
   user: string
+  tty?: string | null
   status: string
   cpu_percent: number
   memory_percent: number
@@ -150,21 +213,42 @@ export interface ProcessInfo {
 
 export interface DiscoveredSession {
   session_id: string
+  project_key: string
   cwd: string
   root_process: ProcessInfo
   all_pids: number[]
   agent_type: string
+  agent_confidence: number
+  agent_detection_reason: string
+  agent_detection_evidence: string[]
+  root_pid: number | null
+  root_cmd: string
+  user: string
+  tty: string | null
+  is_interactive: boolean
+  started_at: string | null
+  elapsed_sec: number | null
 
   // Enriched fields
   project_name: ProjectNameInfo
   project: string
+  project_root: string
+  short_cwd: string
+  session_title: string | null
+  display_name: string
   status: string
+  status_group: string
+  status_dot: string
   status_reason: string
   current_activity: string
   user_instruction: string
+  instruction_source: string | null
+  instruction_confidence: number
   instruction: InstructionInfo
   child_processes: ProcessInfo[]
   active_commands: string[]
+  foreground: ForegroundAgentInfo
+  background_jobs: BackgroundJob[]
 
   // Heartbeat
   heartbeat_ts: number | null
@@ -184,8 +268,13 @@ export interface DiscoveredSession {
   // Project status
   project_status: ProjectRuntimeStatus
   git_status: string
+  git_status_detail: GitStatusDetail
   error_hints: string[]
   recent_files: string[]
+  resource_usage: ResourceUsage
+  is_pinned: boolean
+  is_ignored: boolean
+  tags: string[]
 
   // Timeline
   timeline: ActivityTimelineItem[]
@@ -223,8 +312,17 @@ export interface SystemMetrics {
   net_interfaces: NetInterface[]
 }
 
+export interface ScanMeta {
+  hostname: string
+  last_scan_time: number
+  scan_interval: number
+  discovery_ttl: number
+  active_sessions_count: number
+}
+
 export interface SSEData {
   tasks: Task[]
   discovered: DiscoveredSession[]
   system: SystemMetrics
+  scan: ScanMeta
 }

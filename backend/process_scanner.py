@@ -179,6 +179,9 @@ def _agent_type_from_text(text: str) -> str:
 def _proc_text(proc: psutil.Process) -> str:
     try:
         return " ".join([proc.name(), *(proc.cmdline() or [])])
+    except AttributeError:
+        info = getattr(proc, "info", {}) or {}
+        return " ".join([info.get("name", ""), *(info.get("cmdline") or [])])
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return ""
 
@@ -280,7 +283,10 @@ def detect_agent_type(
     if result.agent_type != "unknown":
         return result
 
-    if _cmd_basename(process.name) == "node" or (process.cmdline and _cmd_basename(process.cmdline[0]) == "node"):
+    if (
+        (_cmd_basename(process.name) == "node" or (process.cmdline and _cmd_basename(process.cmdline[0]) == "node"))
+        and psutil.pid_exists(process.pid)
+    ):
         result = _detect_parent_agent(process.ppid)
         if result.agent_type != "unknown":
             return result
