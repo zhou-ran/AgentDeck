@@ -1,6 +1,7 @@
 export type TaskStatus =
   | 'running'
   | 'busy'
+  | 'needs_input'
   | 'testing'
   | 'editing'
   | 'searching'
@@ -8,9 +9,24 @@ export type TaskStatus =
   | 'running_script'
   | 'waiting'
   | 'idle'
+  | 'stale'
+  | 'error_hint'
   | 'waiting_input'
   | 'completed'
   | 'failed'
+  | 'unknown'
+
+export type SessionStatus =
+  | 'needs_input'
+  | 'testing'
+  | 'editing'
+  | 'searching'
+  | 'git_ops'
+  | 'running_script'
+  | 'busy'
+  | 'idle'
+  | 'stale'
+  | 'error_hint'
   | 'unknown'
 
 export interface PlanStep {
@@ -63,7 +79,8 @@ export interface ProjectRuntimeStatus {
   has_uncommitted: boolean
   has_untracked: boolean
   test_status: string
-  last_commit_msg: string
+  branch: string
+  recent_files: string[]
 }
 
 export interface ActivityTimelineItem {
@@ -157,6 +174,8 @@ export interface DiscoveredSession {
   recent_output: string
   pending_items: string[]
   last_user_message: string
+  source_file: string
+  confidence: number
 
   // Resource metrics
   cpu_percent: number
@@ -166,6 +185,7 @@ export interface DiscoveredSession {
   project_status: ProjectRuntimeStatus
   git_status: string
   error_hints: string[]
+  recent_files: string[]
 
   // Timeline
   timeline: ActivityTimelineItem[]

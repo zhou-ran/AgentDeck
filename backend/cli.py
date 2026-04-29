@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -11,7 +10,13 @@ from pathlib import Path
 
 import click
 
-from backend.config import get_log_dir, get_host, get_port, load_config, get_or_create_token
+from backend.config import (
+    get_log_dir,
+    get_host,
+    get_port,
+    load_config,
+    get_or_create_token,
+)
 from backend.models import (
     Task,
     TaskStatus,
@@ -30,7 +35,6 @@ from backend.task_manager import (
     fail_task,
     generate_handoff_text,
     get_enriched_task,
-    import_pid,
     import_plan,
     list_tasks,
     load_task,
@@ -39,8 +43,8 @@ from backend.task_manager import (
     update_step,
     update_handoff_notes,
 )
-from backend.process_scanner import is_process_alive, discover_sessions
-from backend.security import is_safe_project_dir, verify_pid_for_task
+from backend.process_scanner import discover_sessions
+from backend.security import is_safe_project_dir
 
 
 @click.group()
@@ -99,7 +103,7 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
             cwd=project_dir,
             stdout=log_file,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,  # new process group for clean stop
+            preexec_fn=os.setsid,
         )
     except FileNotFoundError:
         click.echo(f"Error: command not found: {command[0]}", err=True)
@@ -328,25 +332,6 @@ def handoff(task_id: str, notes: str):
     click.echo(text)
 
 
-@cli.command(name="import-pid")
-@click.argument("pid", type=int)
-@click.option("--name", required=True, help="Name for the imported task")
-def import_pid_cmd(pid: int, name: str):
-    """Import an existing process as a managed task.
-
-    Example:
-      agent-foreman-local import-pid 12345 --name my-codex-session
-    """
-    task = import_pid(pid, name)
-    if not task:
-        click.echo(f"Cannot import PID {pid}: process not found or name '{name}' already exists.", err=True)
-        sys.exit(1)
-
-    click.echo(f"Imported PID {pid} as task '{name}'")
-    click.echo(f"  Command: {task.command}")
-    click.echo(f"  Dir:     {task.project_dir}")
-
-
 @cli.command()
 def discover():
     """Auto-discover running agent processes."""
@@ -463,61 +448,6 @@ def status(task_id: str):
             ts = entry.timestamp.isoformat(timespec="seconds")
             step_ref = f" [{entry.step_id}]" if entry.step_id else ""
             click.echo(f"  [{ts}]{step_ref} {entry.message}")
-
-
-@cli.command()
-@click.argument("task_id")
-@click.option("--signal", "sig", default="TERM", help="Signal to send (TERM, KILL, INT)")
-def stop(task_id: str, sig: str):
-    """Stop a running agent task."""
-    task = load_task(task_id)
-    if not task:
-        click.echo(f"Task '{task_id}' not found.", err=True)
-        sys.exit(1)
-
-    if not task.pid:
-        click.echo("Task has no PID.", err=True)
-        sys.exit(1)
-
-    # Verify PID identity before sending signal
-    safe, reason = verify_pid_for_task(task.pid, task.command, task.project_dir)
-    if not safe:
-        click.echo(f"PID verification failed: {reason}", err=True)
-        click.echo("The process may have been replaced. Refusing to kill.", err=True)
-        sys.exit(1)
-
-    if not is_process_alive(task.pid):
-        click.echo(f"Process {task.pid} is not running.")
-        task.status = TaskStatus.completed
-        task.ended_at = datetime.now()
-        save_task(task)
-        return
-
-    sig_map = {"TERM": signal.SIGTERM, "KILL": signal.SIGKILL, "INT": signal.SIGINT}
-    send_signal = sig_map.get(sig.upper(), signal.SIGTERM)
-
-    try:
-        os.kill(task.pid, send_signal)
-        click.echo(f"Sent SIG{sig.upper()} to PID {task.pid}")
-    except ProcessLookupError:
-        click.echo(f"Process {task.pid} already gone.")
-    except PermissionError:
-        click.echo(f"Permission denied to signal PID {task.pid}.", err=True)
-        sys.exit(1)
-
-    # Wait briefly for process to die
-    for _ in range(10):
-        if not is_process_alive(task.pid):
-            break
-        time.sleep(0.5)
-
-    if not is_process_alive(task.pid):
-        task.status = TaskStatus.completed
-        task.ended_at = datetime.now()
-        save_task(task)
-        click.echo("Task stopped.")
-    else:
-        click.echo(f"Process {task.pid} still alive. Use --signal KILL to force.")
 
 
 @cli.command()

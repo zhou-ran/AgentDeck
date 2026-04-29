@@ -42,28 +42,28 @@ class TestNeedsInput:
         activity, reason = infer_session_activity(
             proc, recent_output="Which approach would you prefer?"
         )
-        assert activity == "waiting_input"
+        assert activity == "needs_input"
 
     def test_please_provide(self):
         proc = _make_process()
         activity, _ = infer_session_activity(
             proc, recent_output="Please provide the database credentials."
         )
-        assert activity == "waiting_input"
+        assert activity == "needs_input"
 
     def test_chinese_waiting(self):
         proc = _make_process()
         activity, _ = infer_session_activity(
             proc, recent_output="请确认是否需要继续"
         )
-        assert activity == "waiting_input"
+        assert activity == "needs_input"
 
     def test_let_me_know(self):
         proc = _make_process()
         activity, _ = infer_session_activity(
             proc, recent_output="Let me know when you're ready"
         )
-        assert activity == "waiting_input"
+        assert activity == "needs_input"
 
 
 class TestTesting:
@@ -143,8 +143,8 @@ class TestIdle:
         activity, reason = infer_session_activity(
             proc, heartbeat_ts=time.time() - 1000
         )
-        assert activity == "idle"
-        assert "stale" in reason.lower() or "no activity" in reason.lower()
+        assert activity == "stale"
+        assert "无新输出" in reason
 
 
 class TestPriorityChain:
@@ -156,7 +156,17 @@ class TestPriorityChain:
             proc,
             recent_output="Which option should I choose?",
         )
-        assert activity == "waiting_input"
+        assert activity == "needs_input"
+
+    def test_error_hint_over_testing(self):
+        """error hints should be surfaced as their own status."""
+        child = _make_child("pytest", ["pytest"])
+        proc = _make_process(children=[child])
+        activity, _ = infer_session_activity(
+            proc,
+            recent_output="Traceback: boom",
+        )
+        assert activity == "error_hint"
 
     def test_testing_over_git(self):
         """testing should take priority over git_ops."""

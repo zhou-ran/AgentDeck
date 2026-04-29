@@ -1,7 +1,7 @@
 # AgentStatus — Local Coding Agent Supervisor
 
-A unified web dashboard and CLI for monitoring coding agents
-(codex, claude, aider, gemini, pytest, npm, git, etc.) on a Linux server.
+A local/LAN web dashboard and CLI for monitoring coding agents
+(codex, claude, kimi, aider, gemini, pytest, npm, git, etc.) on one machine.
 
 ## Quick Start
 
@@ -40,18 +40,6 @@ agent-foreman-local start my-training \
 agent-foreman-local tail my-training -f
 ```
 
-### Stop a Task
-
-```bash
-agent-foreman-local stop my-training
-```
-
-### Import an Existing Process
-
-```bash
-agent-foreman-local import-pid 12345 --name my-codex-session
-```
-
 ## CLI Reference
 
 | Command | Description |
@@ -61,7 +49,6 @@ agent-foreman-local import-pid 12345 --name my-codex-session
 | `agent-foreman-local init <name> --dir <dir> --goal G` | Initialize a task without a command |
 | `agent-foreman-local list [--all]` | List tasks |
 | `agent-foreman-local status <task_id>` | Show detailed task status |
-| `agent-foreman-local stop <task_id> [--signal KILL]` | Stop a task |
 | `agent-foreman-local tail <task_id> [-f] [-n 100]` | Tail log output |
 | `agent-foreman-local note <task_id> "message"` | Add a progress note |
 | `agent-foreman-local step <task_id> <step_id> --status done` | Update a plan step |
@@ -155,8 +142,8 @@ make clean     # Clean build artifacts
 - Default bind: `127.0.0.1` (localhost only)
 - Token auth for LAN access
 - Path traversal prevention
-- PID verification before kill
 - Process env never read
+- No browser command execution, PID import, stop, or kill endpoint
 - Rate limiting (120 req/min)
 - Atomic file writes
 

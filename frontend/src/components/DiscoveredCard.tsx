@@ -1,32 +1,45 @@
 import { useState } from 'react'
-import type { DiscoveredSession } from '../types'
-import { api } from '../api/client'
+import type { DiscoveredSession, ProcessInfo } from '../types'
+import { ProcessTree } from './ProcessTree'
 
 const AGENT_TYPE_LABELS: Record<string, string> = {
-  codex: 'Codex 班组',
-  claude: 'Claude 班组',
-  'claude-code': 'Claude 班组',
-  kimi: 'Kimi 班组',
-  'kimi-code': 'Kimi 班组',
-  aider: 'Aider 班组',
-  gemini: 'Gemini 班组',
-  node: 'Node 班组',
-  python: 'Python 班组',
-  python3: 'Python 班组',
+  codex: 'Codex',
+  claude: 'Claude',
+  'claude-code': 'Claude Code',
+  kimi: 'Kimi',
+  'kimi-code': 'Kimi Code',
+  aider: 'Aider',
+  gemini: 'Gemini',
 }
 
-const STATUS_LANE_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<string, string> = {
+  needs_input: '等输入',
   busy: '忙碌',
   testing: '测试中',
   editing: '编辑中',
   searching: '搜索中',
-  git_ops: 'Git操作',
+  git_ops: 'Git 操作',
   running_script: '脚本运行',
-  running: '运行中',
   idle: '空闲',
-  waiting: '等待中',
-  waiting_input: '等回话',
+  stale: '失联',
+  error_hint: '有错误',
   unknown: '未知',
+  waiting_input: '等输入',
+}
+
+const STATUS_STYLE: Record<string, { border: string; badge: string }> = {
+  needs_input: { border: 'border-orange-500', badge: 'bg-orange-900 text-orange-300' },
+  busy: { border: 'border-emerald-500', badge: 'bg-emerald-900 text-emerald-300' },
+  testing: { border: 'border-cyan-500', badge: 'bg-cyan-900 text-cyan-300' },
+  editing: { border: 'border-teal-500', badge: 'bg-teal-900 text-teal-300' },
+  searching: { border: 'border-sky-500', badge: 'bg-sky-900 text-sky-300' },
+  git_ops: { border: 'border-indigo-500', badge: 'bg-indigo-900 text-indigo-300' },
+  running_script: { border: 'border-violet-500', badge: 'bg-violet-900 text-violet-300' },
+  idle: { border: 'border-yellow-500', badge: 'bg-yellow-900 text-yellow-300' },
+  stale: { border: 'border-gray-500', badge: 'bg-gray-800 text-gray-300' },
+  error_hint: { border: 'border-red-500', badge: 'bg-red-900 text-red-300' },
+  unknown: { border: 'border-gray-500', badge: 'bg-gray-800 text-gray-300' },
+  waiting_input: { border: 'border-orange-500', badge: 'bg-orange-900 text-orange-300' },
 }
 
 function fmtHeartbeat(ageSec: number | null): string {
@@ -36,76 +49,51 @@ function fmtHeartbeat(ageSec: number | null): string {
   return `${Math.floor(ageSec / 3600)}h 前`
 }
 
+function commandOf(proc: ProcessInfo): string {
+  return proc.cmdline?.join(' ') || proc.name || '-'
+}
+
+function DetailRow({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div>
+      <span className="text-gray-600">{label}: </span>
+      <span className="font-mono text-gray-400 break-all">{value || '-'}</span>
+    </div>
+  )
+}
+
 export function DiscoveredCard({ session }: { session: DiscoveredSession }) {
-  const [importing, setImporting] = useState(false)
-  const [importName, setImportName] = useState('')
-  const [error, setError] = useState('')
   const [expanded, setExpanded] = useState(false)
 
   const root = session.root_process
-  const typeLabel = AGENT_TYPE_LABELS[session.agent_type] || session.agent_type
-  const statusLabel = STATUS_LANE_LABELS[session.status] || session.status
+  const typeLabel = AGENT_TYPE_LABELS[session.agent_type] || session.agent_type || 'unknown'
+  const statusLabel = STATUS_LABELS[session.status] || session.status
+  const statusStyle = STATUS_STYLE[session.status] || STATUS_STYLE.unknown
   const projectName = session.project_name?.name || session.project || 'unknown'
   const shortCwd = session.project_name?.short_cwd || session.cwd
-
-  const handleImport = async () => {
-    if (!importName.trim()) return
-    setImporting(true)
-    setError('')
-    try {
-      await api.importPid(root.pid, importName.trim())
-      setImportName('')
-    } catch (e: any) {
-      setError(e.message || 'Import failed')
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  // Status color for left border
-  const borderColor = {
-    busy: 'border-emerald-500',
-    testing: 'border-cyan-500',
-    editing: 'border-teal-500',
-    searching: 'border-sky-500',
-    git_ops: 'border-indigo-500',
-    running_script: 'border-violet-500',
-    running: 'border-green-500',
-    idle: 'border-yellow-500',
-    waiting: 'border-amber-500',
-    waiting_input: 'border-orange-500',
-    unknown: 'border-gray-500',
-  }[session.status] || 'border-gray-500'
+  const instruction = session.user_instruction || '未找到原始指令'
+  const confidence = session.confidence ?? session.instruction?.confidence ?? 0
+  const sourceFile = session.source_file || session.instruction?.source_file || ''
 
   return (
-    <div className={`bg-gray-900 rounded-xl border-l-4 ${borderColor} p-4`}>
-      {/* Header */}
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2 flex-wrap">
+    <div className={`bg-gray-900 rounded-lg border-l-4 ${statusStyle.border} p-4`}>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-gray-100 truncate">{projectName}</div>
+          <div className="text-[11px] text-gray-500 font-mono truncate">{shortCwd}</div>
+        </div>
+        <div className="flex gap-1.5 shrink-0">
           <span className="px-1.5 py-0.5 bg-purple-900 text-purple-300 rounded text-[10px] font-mono">
             {typeLabel}
           </span>
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-            session.status === 'waiting_input' ? 'bg-orange-900 text-orange-300' :
-            session.status === 'idle' ? 'bg-yellow-900 text-yellow-300' :
-            'bg-green-900 text-green-300'
-          }`}>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusStyle.badge}`}>
             {statusLabel}
           </span>
-          <span className="text-xs text-gray-500">{session.all_pids.length} 进程</span>
         </div>
-        <span className="text-[10px] text-gray-600 font-mono">{session.session_id}</span>
       </div>
 
-      {/* Project name + cwd */}
-      <div className="mb-2">
-        <div className="text-sm font-semibold text-gray-200">{projectName}</div>
-        <div className="text-[11px] text-gray-500 font-mono truncate">{shortCwd}</div>
-      </div>
-
-      {/* Heartbeat + Activity */}
-      <div className="space-y-1 text-xs text-gray-400 mb-3">
-        <div className="flex gap-4">
+      <div className="space-y-2 text-xs text-gray-400">
+        <div className="flex gap-4 flex-wrap">
           <span>
             <span className="text-gray-500">心跳:</span>{' '}
             <span className={session.heartbeat_age_sec !== null && session.heartbeat_age_sec < 120 ? 'text-green-400' : 'text-gray-400'}>
@@ -113,34 +101,38 @@ export function DiscoveredCard({ session }: { session: DiscoveredSession }) {
             </span>
           </span>
           {session.project_name?.git_branch && (
-            <span>
-              <span className="text-gray-500">分支:</span>{' '}
-              <span className="text-gray-300">{session.project_name.git_branch}</span>
-            </span>
+            <span><span className="text-gray-500">分支:</span> {session.project_name.git_branch}</span>
           )}
+          <span><span className="text-gray-500">PID:</span> {root.pid}</span>
+          <span><span className="text-gray-500">CPU:</span> {session.cpu_percent.toFixed(1)}%</span>
+          <span><span className="text-gray-500">MEM:</span> {session.memory_percent.toFixed(1)}%</span>
         </div>
 
-        {session.current_activity && (
-          <div>
-            <span className="text-gray-500">当前活动:</span>{' '}
-            <span className="text-gray-300">{session.current_activity}</span>
-          </div>
-        )}
+        <div>
+          <span className="text-gray-500">当前活动:</span>{' '}
+          <span className="text-gray-300">{session.current_activity || session.status_reason || '-'}</span>
+        </div>
 
-        {/* Recent output preview */}
+        <div>
+          <span className="text-gray-500">用户指令:</span>{' '}
+          <span className={confidence > 0 ? 'text-gray-300' : 'text-gray-500'}>
+            {instruction.slice(0, 160)}
+          </span>
+          <span className="ml-2 text-[10px] text-gray-600">confidence {confidence.toFixed(1)}</span>
+        </div>
+
         {session.recent_output && (
           <div>
-            <span className="text-gray-500">最近动静:</span>
+            <span className="text-gray-500">最近输出:</span>
             <pre className="mt-1 bg-gray-800 rounded p-2 text-[10px] text-gray-300 overflow-hidden max-h-16 whitespace-pre-wrap break-all">
-              {session.recent_output.slice(0, 200)}
+              {session.recent_output.slice(0, 240)}
             </pre>
           </div>
         )}
 
-        {/* Pending items */}
-        {session.pending_items && session.pending_items.length > 0 && (
+        {session.pending_items?.length > 0 && (
           <div>
-            <span className="text-gray-500">还没干完:</span>
+            <span className="text-gray-500">待办:</span>
             <ul className="mt-1 space-y-0.5">
               {session.pending_items.slice(0, 4).map((item, i) => (
                 <li key={i} className="text-[10px] text-gray-400 pl-2 before:content-['·'] before:mr-1 before:text-gray-600">
@@ -151,44 +143,15 @@ export function DiscoveredCard({ session }: { session: DiscoveredSession }) {
           </div>
         )}
 
-        {/* User instruction */}
-        {session.user_instruction && (
-          <div>
-            <span className="text-gray-500">用户指令:</span>{' '}
-            <span className="text-gray-300 italic">"{session.user_instruction.slice(0, 120)}"</span>
-          </div>
-        )}
-
-        {/* Metrics grid */}
         <div className="flex gap-4 flex-wrap">
-          {session.project_status?.dirty_files && session.project_status.dirty_files.length > 0 && (
-            <span>
-              <span className="text-gray-500">脏文件:</span>{' '}
-              <span className="text-orange-400">{session.project_status.dirty_files.length}</span>
-            </span>
-          )}
-          {session.git_status && (
-            <span>
-              <span className="text-gray-500">Git:</span>{' '}
-              <span className={session.git_status === 'dirty' ? 'text-orange-400' : 'text-green-400'}>{session.git_status}</span>
-            </span>
-          )}
-          {session.child_processes && session.child_processes.length > 0 && (
-            <span>
-              <span className="text-gray-500">子进程:</span> {session.child_processes.length}
-            </span>
-          )}
-          {(session.cpu_percent > 0 || session.memory_percent > 0) && (
-            <>
-              <span><span className="text-gray-500">CPU:</span> {session.cpu_percent.toFixed(1)}%</span>
-              <span><span className="text-gray-500">MEM:</span> {session.memory_percent.toFixed(1)}%</span>
-            </>
-          )}
+          <span><span className="text-gray-500">Git:</span> {session.git_status || '-'}</span>
+          <span><span className="text-gray-500">脏文件:</span> {session.project_status?.dirty_files?.length ?? 0}</span>
+          <span><span className="text-gray-500">最近文件:</span> {session.recent_files?.length ?? 0}</span>
+          <span><span className="text-gray-500">进程:</span> {session.all_pids.length}</span>
         </div>
 
-        {/* Error hints */}
-        {session.error_hints && session.error_hints.length > 0 && (
-          <div className="mt-1">
+        {session.error_hints?.length > 0 && (
+          <div>
             {session.error_hints.map((hint, i) => (
               <span key={i} className="inline-block mr-1 px-1.5 py-0.5 bg-red-900 text-red-300 rounded text-[10px]">
                 {hint}
@@ -198,54 +161,66 @@ export function DiscoveredCard({ session }: { session: DiscoveredSession }) {
         )}
       </div>
 
-      {/* Expand/Collapse details */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="text-[10px] text-gray-500 hover:text-gray-300 mb-2"
+        className="text-[10px] text-gray-500 hover:text-gray-300 mt-3"
       >
         {expanded ? '收起详情' : '查看详情'}
       </button>
 
       {expanded && (
-        <div className="border-t border-gray-800 pt-2 mb-2 space-y-1 text-[10px] text-gray-500">
-          <div>cmd: <span className="font-mono text-gray-400">{root.cmdline.slice(0, 3).join(' ')}</span></div>
-          <div>pid: {root.pid} | user: {root.user || '-'} | elapsed: {root.elapsed}</div>
-          {session.active_commands && session.active_commands.length > 0 && (
-            <div>活跃命令: {session.active_commands.slice(0, 3).join(' | ')}</div>
+        <div className="border-t border-gray-800 pt-3 mt-3 space-y-3 text-[10px] text-gray-500">
+          <div className="grid gap-1">
+            <DetailRow label="cwd" value={session.cwd} />
+            <DetailRow label="command" value={commandOf(root)} />
+            <DetailRow label="pid/ppid/user" value={`${root.pid}/${root.ppid}/${root.user || '-'}`} />
+            <DetailRow label="elapsed" value={root.elapsed} />
+            <DetailRow label="session file" value={sourceFile} />
+            <DetailRow label="source" value={session.instruction?.source || '-'} />
+          </div>
+
+          {session.project_status?.dirty_files?.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">Git dirty files</div>
+              <div className="font-mono text-gray-400 space-y-0.5">
+                {session.project_status.dirty_files.slice(0, 8).map(file => <div key={file}>{file}</div>)}
+              </div>
+            </div>
           )}
-          {session.project_status?.last_commit_msg && (
-            <div>最近提交: {session.project_status.last_commit_msg}</div>
+
+          {session.recent_files?.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">Recent files</div>
+              <div className="font-mono text-gray-400 space-y-0.5">
+                {session.recent_files.slice(0, 8).map(file => <div key={file}>{file}</div>)}
+              </div>
+            </div>
+          )}
+
+          {session.active_commands?.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">Active commands</div>
+              <div className="font-mono text-gray-400 space-y-0.5">
+                {session.active_commands.map(cmd => <div key={cmd}>{cmd}</div>)}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-gray-500 mb-1">Process tree</div>
+            <ProcessTree tree={root} />
+          </div>
+
+          {session.recent_logs?.length > 0 && (
+            <div>
+              <div className="text-gray-500 mb-1">Logs tail</div>
+              <pre className="bg-gray-800 rounded p-2 text-[10px] text-gray-300 max-h-32 overflow-auto whitespace-pre-wrap break-all">
+                {session.recent_logs.join('\n')}
+              </pre>
+            </div>
           )}
         </div>
       )}
-
-      {/* Import controls */}
-      <div className="border-t border-gray-800 pt-3">
-        <div className="flex gap-2">
-          <input
-            value={importName}
-            onChange={(e) => setImportName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleImport()}
-            placeholder="任务名称..."
-            className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-gray-500"
-          />
-          <button
-            onClick={handleImport}
-            disabled={importing || !importName.trim()}
-            className="px-3 py-1 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 rounded text-xs"
-          >
-            导入
-          </button>
-          <button
-            onClick={() => navigator.clipboard.writeText(session.cwd)}
-            className="px-2 py-1 bg-gray-800 hover:bg-gray-700 rounded text-[10px] text-gray-400"
-            title="复制路径"
-          >
-            复制路径
-          </button>
-        </div>
-        {error && <div className="text-red-400 text-[10px] mt-1">{error}</div>}
-      </div>
     </div>
   )
 }

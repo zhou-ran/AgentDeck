@@ -6,7 +6,13 @@ import os
 import time
 from collections import namedtuple
 
-from backend.process_scanner import get_system_metrics, is_process_alive, _format_elapsed
+from backend.models import ProcessInfo
+from backend.process_scanner import (
+    discover_agent_processes,
+    get_system_metrics,
+    is_process_alive,
+    _format_elapsed,
+)
 
 
 class TestIsProcessAlive:
@@ -58,3 +64,33 @@ class TestSystemMetrics:
 
         assert len(metrics.disk_usages) == 1
         assert metrics.disk_usages[0]["path"] == "/data"
+
+
+class TestDiscoverAgentProcesses:
+    def test_only_root_agent_processes_are_returned(self, monkeypatch):
+        class FakeProc:
+            def __init__(self, pid, name, cmdline, parent=None):
+                self.info = {"pid": pid, "name": name, "cmdline": cmdline}
+                self._parent = parent
+
+            def parent(self):
+                return self._parent
+
+        root = FakeProc(10, "node", ["node", "/usr/bin/codex"])
+        child = FakeProc(11, "git", ["git", "status"], parent=root)
+        python = FakeProc(12, "python", ["python", "script.py"])
+
+        def fake_proc_to_info(proc, include_children=True):
+            return ProcessInfo(
+                pid=proc.info["pid"],
+                ppid=1,
+                name=proc.info["name"],
+                cmdline=proc.info["cmdline"],
+            )
+
+        monkeypatch.setattr("backend.process_scanner.psutil.process_iter", lambda attrs=None: [root, child, python])
+        monkeypatch.setattr("backend.process_scanner._proc_to_info", fake_proc_to_info)
+
+        results = discover_agent_processes()
+
+        assert [p.pid for p in results] == [10]

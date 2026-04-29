@@ -100,6 +100,16 @@ app.include_router(tasks_router, prefix="/api", dependencies=[require_token()])
 app.include_router(processes_router, prefix="/api", dependencies=[require_token()])
 app.include_router(sse_router, prefix="/api", dependencies=[require_token()])
 
+
+@app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def api_not_found(path: str):
+    return Response(
+        content='{"detail":"Not Found"}',
+        status_code=404,
+        media_type="application/json",
+    )
+
+
 # Serve frontend static files (built by Vite)
 _static_dir = Path(__file__).parent / "static"
 if _static_dir.exists():

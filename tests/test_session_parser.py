@@ -245,6 +245,16 @@ class TestDiscoverSessionFiles:
         files = discover_session_files("unknown-agent", str(tmp_path))
         assert isinstance(files, list)
 
+    def test_project_local_kimi_paths(self, tmp_path: Path):
+        session_dir = tmp_path / ".kimi"
+        session_dir.mkdir()
+        session_file = session_dir / "session.jsonl"
+        session_file.write_text("{}\n")
+
+        files = discover_session_files("kimi-code", str(tmp_path))
+
+        assert session_file.resolve() in [f.resolve() for f in files]
+
 
 # ---- Test match_session_to_process ----
 
@@ -276,5 +286,18 @@ class TestMatchSessionToProcess:
             {"cwd": "/other/unique-project-a", "start_ts": 1000, "session_id": "a"},
         ]
         result = match_session_to_process(sessions, "/my/unique-project-b", 1000)
-        # Should still return something (fallback to first session)
+        # Must not fall back to an unrelated latest session.
+        assert result is None
+
+    def test_match_by_project_local_source_file(self):
+        sessions = [
+            {
+                "cwd": None,
+                "start_ts": 1000,
+                "session_id": "local",
+                "source_file": "/home/user/project/.codex/session.jsonl",
+            },
+        ]
+        result = match_session_to_process(sessions, "/home/user/project", 1000)
         assert result is not None
+        assert result["session_id"] == "local"

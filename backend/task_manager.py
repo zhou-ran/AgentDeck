@@ -351,39 +351,3 @@ def generate_handoff_text(task_id: str) -> Optional[str]:
         lines.append("")
 
     return "\n".join(lines)
-
-
-def import_pid(pid: int, name: str) -> Optional[Task]:
-    """Import an existing PID as a managed task.
-
-    Creates a Task record pointing at the existing process.
-    Marked as imported=True so the UI can distinguish it.
-    """
-    from backend.process_scanner import get_process_info
-
-    info = get_process_info(pid)
-    if not info:
-        return None
-
-    task_id = name
-    # Check if task_id already exists
-    existing = load_task(task_id)
-    if existing:
-        return None
-
-    cmd_str = " ".join(info.cmdline) if info.cmdline else f"(pid {pid})"
-    cwd = info.cwd or "."
-
-    task = Task(
-        task_id=task_id,
-        name=name,
-        project_dir=cwd,
-        command=cmd_str,
-        pid=pid,
-        status=TaskStatus.running,
-        started_at=datetime.fromtimestamp(info.create_time) if info.create_time else datetime.now(),
-        imported=True,
-        imported_from_pid=pid,
-    )
-    save_task(task)
-    return task

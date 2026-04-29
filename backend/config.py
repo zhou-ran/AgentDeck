@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import secrets
 from pathlib import Path
 from typing import Any
@@ -16,8 +15,6 @@ DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.yaml"
 AGENT_KEYWORDS = [
     "codex", "claude", "claude-code", "aider", "gemini",
     "kimi", "kimi-code",
-    "node", "python", "python3", "uv", "npm", "pnpm", "bun",
-    "git", "pytest", "Rscript", "cargo", "go",
 ]
 
 _CONFIG_CACHE: dict[str, Any] | None = None

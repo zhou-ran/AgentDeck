@@ -12,13 +12,14 @@ interface FilterBarProps {
 }
 
 const ALL_STATUSES: TaskStatus[] = [
-  'running', 'busy', 'testing', 'editing', 'searching', 'git_ops',
-  'running_script', 'waiting', 'idle', 'waiting_input', 'completed', 'failed', 'unknown'
+  'running', 'busy', 'needs_input', 'testing', 'editing', 'searching', 'git_ops',
+  'running_script', 'waiting', 'idle', 'stale', 'error_hint', 'waiting_input', 'completed', 'failed', 'unknown'
 ]
 
 const STATUS_COLORS: Record<TaskStatus, string> = {
   running:        'bg-green-600 text-green-100 border-green-500',
   busy:           'bg-emerald-600 text-emerald-100 border-emerald-500',
+  needs_input:    'bg-orange-600 text-orange-100 border-orange-500',
   testing:        'bg-cyan-600 text-cyan-100 border-cyan-500',
   editing:        'bg-teal-600 text-teal-100 border-teal-500',
   searching:      'bg-sky-600 text-sky-100 border-sky-500',
@@ -26,6 +27,8 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   running_script: 'bg-violet-600 text-violet-100 border-violet-500',
   waiting:        'bg-amber-600 text-amber-100 border-amber-500',
   idle:           'bg-yellow-600 text-yellow-100 border-yellow-500',
+  stale:          'bg-gray-700 text-gray-100 border-gray-600',
+  error_hint:     'bg-red-600 text-red-100 border-red-500',
   waiting_input:  'bg-orange-600 text-orange-100 border-orange-500',
   completed:      'bg-blue-600 text-blue-100 border-blue-500',
   failed:         'bg-red-600 text-red-100 border-red-500',
@@ -35,6 +38,7 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
 const STATUS_LABELS: Record<TaskStatus, string> = {
   running: '运行中',
   busy: '忙碌',
+  needs_input: '等输入',
   testing: '测试中',
   editing: '编辑中',
   searching: '搜索中',
@@ -42,6 +46,8 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   running_script: '脚本运行',
   waiting: '等待中',
   idle: '空闲',
+  stale: '失联',
+  error_hint: '有错误',
   waiting_input: '等输入',
   completed: '已完成',
   failed: '失败',

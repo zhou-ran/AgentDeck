@@ -20,9 +20,8 @@ SESSION_PATHS: dict[str, list[str]] = {
     "codex": ["~/.codex/sessions", "~/.codex/logs"],
     "claude": ["~/.claude/projects", "~/.claude/logs"],
     "claude-code": ["~/.claude/projects", "~/.claude/logs"],
-    "kimi": ["~/.kimi/logs", "~/.kimi/user-history"],
-    "kimi-code": ["~/.kimi-code/logs", "~/.kimi-code/user-history",
-                  "~/.kimi/logs", "~/.kimi/user-history"],
+    "kimi": ["~/.kimi", "~/agent_logs"],
+    "kimi-code": ["~/.kimi-code", "~/.kimi", "~/agent_logs"],
 }
 
 
@@ -339,21 +338,65 @@ def parse_kimi_session(path: Path) -> dict[str, Any] | None:
     return meta
 
 
+def _project_session_paths(agent_type: str, project_dir: str) -> list[Path]:
+    if not project_dir:
+        return []
+
+    roots = []
+    p = Path(project_dir).expanduser()
+    if p.exists():
+        roots.append(p)
+        try:
+            from backend.git_utils import get_git_root
+            git_root = get_git_root(str(p))
+            if git_root:
+                git_path = Path(git_root)
+                if git_path not in roots:
+                    roots.append(git_path)
+        except Exception:
+            pass
+
+    names = ["logs"]
+    if agent_type == "codex":
+        names.append(".codex")
+    elif agent_type in ("claude", "claude-code"):
+        names.append(".claude")
+    elif agent_type in ("kimi", "kimi-code"):
+        names.extend([".kimi", ".kimi-code"])
+    else:
+        names.extend([".codex", ".claude", ".kimi", ".kimi-code"])
+
+    paths: list[Path] = []
+    for root in roots:
+        for name in names:
+            candidate = root / name
+            if candidate.exists():
+                paths.append(candidate)
+    return paths
+
+
 def discover_session_files(agent_type: str, project_dir: str) -> list[Path]:
     """Find candidate session files for a given agent type.
 
     Searches known session directories and returns files sorted by mtime (newest first).
     """
-    paths = SESSION_PATHS.get(agent_type, [])
+    paths = list(SESSION_PATHS.get(agent_type, []))
     if not paths:
         # Try all known paths for unknown agent types
         paths = [p for plist in SESSION_PATHS.values() for p in plist]
 
     candidates: list[Path] = []
-    for path_str in paths:
-        expanded = Path(_expand_path(path_str) or path_str)
-        if not expanded.exists():
+    search_roots = [Path(_expand_path(path_str) or path_str) for path_str in paths]
+    search_roots.extend(_project_session_paths(agent_type, project_dir))
+    seen_roots: set[Path] = set()
+    for expanded in search_roots:
+        try:
+            expanded = expanded.resolve()
+        except OSError:
             continue
+        if expanded in seen_roots or not expanded.exists():
+            continue
+        seen_roots.add(expanded)
         try:
             for f in expanded.rglob("*.jsonl"):
                 if f.is_file():
@@ -366,8 +409,37 @@ def discover_session_files(agent_type: str, project_dir: str) -> list[Path]:
             continue
 
     # Sort by mtime, newest first
+    candidates = list(dict.fromkeys(candidates))
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates[:120]  # Cap at 120 files
+
+
+def _norm_path(value: str) -> str:
+    return os.path.normpath(os.path.expanduser(value))
+
+
+def _path_within(child: str, parent: str) -> bool:
+    if not child or not parent:
+        return False
+    try:
+        child_n = _norm_path(child)
+        parent_n = _norm_path(parent)
+        return os.path.commonpath([child_n, parent_n]) == parent_n
+    except ValueError:
+        return False
+
+
+def _session_matches_project(session: dict[str, Any], cwd: str) -> bool:
+    if not cwd:
+        return False
+    s_cwd = session.get("cwd") or ""
+    if s_cwd:
+        if _norm_path(s_cwd) == _norm_path(cwd):
+            return True
+        if _path_within(cwd, s_cwd) or _path_within(s_cwd, cwd):
+            return True
+    source_file = session.get("source_file") or ""
+    return _path_within(source_file, cwd)
 
 
 def match_session_to_process(
@@ -378,28 +450,16 @@ def match_session_to_process(
     """Find the best matching session for a process.
 
     Matching strategy:
-    1. Filter by cwd match (exact or basename)
-    2. If multiple matches, pick closest start_ts
-    3. If no cwd match, return most recent session
+    1. Require a cwd/project-local source match.
+    2. If multiple matches, pick closest start_ts.
+    3. If no trustworthy match exists, return None.
     """
     if not sessions:
         return None
 
-    # Filter by cwd
-    cwd_matches = []
-    cwd_basename = os.path.basename(cwd) if cwd else ""
-    for s in sessions:
-        s_cwd = s.get("cwd", "")
-        if not s_cwd:
-            continue
-        # Exact match
-        if os.path.normpath(s_cwd) == os.path.normpath(cwd):
-            cwd_matches.append(s)
-        # Basename match
-        elif cwd_basename and os.path.basename(s_cwd) == cwd_basename:
-            cwd_matches.append(s)
-
-    pool = cwd_matches if cwd_matches else sessions
+    pool = [s for s in sessions if _session_matches_project(s, cwd)]
+    if not pool:
+        return None
 
     if start_ts and len(pool) > 1:
         # Pick closest start_ts

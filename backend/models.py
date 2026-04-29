@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class TaskStatus(str, Enum):
     running = "running"
     busy = "busy"
+    needs_input = "needs_input"
     testing = "testing"
     editing = "editing"
     searching = "searching"
@@ -17,6 +18,8 @@ class TaskStatus(str, Enum):
     running_script = "running_script"
     waiting = "waiting"
     idle = "idle"
+    stale = "stale"
+    error_hint = "error_hint"
     waiting_input = "waiting_input"
     completed = "completed"
     failed = "failed"
@@ -65,7 +68,8 @@ class ProjectRuntimeStatus(BaseModel):
     has_uncommitted: bool = False
     has_untracked: bool = False
     test_status: str = ""  # "passing", "failing", "unknown"
-    last_commit_msg: str = ""
+    branch: str = ""
+    recent_files: list[str] = Field(default_factory=list)
 
 
 class ActivityTimelineItem(BaseModel):
@@ -222,6 +226,8 @@ class DiscoveredSession(BaseModel):
     recent_output: str = ""
     pending_items: list[str] = Field(default_factory=list)
     last_user_message: str = ""
+    source_file: str = ""
+    confidence: float = 0.0
 
     # Resource metrics
     cpu_percent: float = 0.0
@@ -231,14 +237,10 @@ class DiscoveredSession(BaseModel):
     project_status: ProjectRuntimeStatus = Field(default_factory=ProjectRuntimeStatus)
     git_status: str = ""
     error_hints: list[str] = Field(default_factory=list)
+    recent_files: list[str] = Field(default_factory=list)
 
     # Timeline
     timeline: list[ActivityTimelineItem] = Field(default_factory=list)
 
     # Log info
     recent_logs: list[str] = Field(default_factory=list)
-
-
-class ImportPidRequest(BaseModel):
-    pid: int
-    name: str
