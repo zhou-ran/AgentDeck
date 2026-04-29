@@ -274,6 +274,7 @@ class TaskFail(BaseModel):
 class DiscoveredSession(BaseModel):
     """A group of processes under the same cwd, discovered by auto-scan."""
     session_id: str
+    task_id: str = ""
     project_key: str = ""
     cwd: str
     root_process: ProcessInfo

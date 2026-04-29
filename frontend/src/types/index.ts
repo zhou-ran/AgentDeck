@@ -220,6 +220,7 @@ export interface ProcessInfo {
 
 export interface DiscoveredSession {
   session_id: string
+  task_id?: string | null
   project_key: string
   cwd: string
   root_process: ProcessInfo
