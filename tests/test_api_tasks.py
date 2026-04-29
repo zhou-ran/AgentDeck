@@ -55,3 +55,10 @@ class TestTaskApi:
         res = _request("GET", "/api/tasks/.hidden")
 
         assert res.status_code == 400
+
+    def test_stop_route_is_not_available(self):
+        api_rate_limiter._requests.clear()
+
+        res = _request("POST", "/api/tasks/anything/stop")
+
+        assert res.status_code == 404

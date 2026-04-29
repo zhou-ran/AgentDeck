@@ -60,8 +60,6 @@ export const api = {
   deleteTask: (id: string) =>
     fetch(`${BASE}/tasks/${id}`, { method: 'DELETE', headers: authHeaders() }),
 
-  stopTask: (id: string) => fetchJson<Task>(`/tasks/${id}/stop`, { method: 'POST' }),
-
   importPlan: (id: string, steps: { id: string; title: string }[]) =>
     fetchJson<Task>(`/tasks/${id}/plan`, {
       method: 'POST',
@@ -107,10 +105,4 @@ export const api = {
   getProcessTree: (id: string) => fetchJson<ProcessInfo>(`/tasks/${id}/process-tree`),
 
   discover: () => fetchJson<{ count: number; sessions: DiscoveredSession[] }>('/discover'),
-
-  importPid: (pid: number, name: string) =>
-    fetchJson<Task>('/import-pid', {
-      method: 'POST',
-      body: JSON.stringify({ pid, name }),
-    }),
 }

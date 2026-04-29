@@ -2,30 +2,64 @@ from __future__ import annotations
 
 import collections
 import hashlib
-import json
 import os
 import re
-import subprocess
 import time
-from datetime import datetime, timedelta
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 import psutil
 
-from backend.config import get_log_dir
-from backend.log_manager import get_log_tail
 from backend.models import (
     ActivityTimelineItem,
     CpuMemSample,
     DiscoveredSession,
     InstructionInfo,
-    ProcessInfo,
     ProjectNameInfo,
     ProjectRuntimeStatus,
+    ProcessInfo,
     ResourceMetrics,
     SystemMetrics,
-    TaskStatus,
+)
+from backend.git_utils import (
+    get_changed_files,
+    get_git_branch,
+    get_git_root,
+    get_git_status_short,
+)
+
+# ---- Root agent patterns for detecting top-level agents ----
+ROOT_AGENT_PATTERNS = [
+    re.compile(r"codex\b", re.I),
+    re.compile(r"claude[-_]?code\b", re.I),
+    re.compile(r"claude\b", re.I),
+    re.compile(r"kimi[-_]?code\b", re.I),
+    re.compile(r"kimi\b", re.I),
+    re.compile(r"aider\b", re.I),
+    re.compile(r"gemini\b", re.I),
+]
+
+# ---- Needs-input detection patterns ----
+WAITING_RE = re.compile(
+    r"(?:"
+    r"\?$|would you like|shall i|which (?:option|approach)|let me know|"
+    r"please provide|please confirm|please choose|please tell me|"
+    r"do you want me to|should i continue|is this correct|"
+    r"请提供|是否需要|请确认|请选择|请告诉我|你想要|要我继续吗|这样对吗"
+    r")",
+    re.I,
+)
+
+# ---- Error detection patterns ----
+ERROR_RE = re.compile(
+    r"(?:Traceback|ERROR|Failed|FAILED|Exception|panic:|fatal:|permission denied|quota exceeded)",
+    re.I,
+)
+
+# ---- Instruction label patterns ----
+INSTRUCTION_LABEL_RE = re.compile(
+    r"(?:^|\n)(?:user(?:\s+instruction)?|task|goal|指令|任务|目标)\s*[:：]\s*(.+?)(?:\n|$)",
+    re.I,
 )
 
 
@@ -113,302 +147,54 @@ def is_process_alive(pid: int) -> bool:
     return psutil.pid_exists(pid)
 
 
-ROOT_AGENT_PATTERNS = ("codex", "kimi-code", "kimi", "claude-code", "claude", "aider", "gemini")
-WAITING_RE = re.compile(
-    r"(waiting for input|approve\?|continue\?|confirm|permission|please provide|let me know|"
-    r"which .+\?|需要确认|是否继续|请确认|y/n)",
-    re.I,
-)
-ERROR_RE = re.compile(r"(Traceback|ERROR|Exception|command not found|permission denied|quota exceeded|API error|rate limit|认证失败)", re.I)
-INSTRUCTION_LABEL_RE = re.compile(r"^\s*(?:User|Human|Prompt|Task|Instruction|用户|用户指令|目标)\s*[:：]\s*(.+)\s*$", re.I)
+def _agent_type_from_text(text: str) -> str:
+    text_lower = text.lower()
+    for agent_type, pattern in (
+        ("claude-code", re.compile(r"claude[-_]?code\b", re.I)),
+        ("kimi-code", re.compile(r"kimi[-_]?code\b", re.I)),
+        ("codex", re.compile(r"codex\b", re.I)),
+        ("claude", re.compile(r"claude\b", re.I)),
+        ("kimi", re.compile(r"kimi\b", re.I)),
+        ("aider", re.compile(r"aider\b", re.I)),
+        ("gemini", re.compile(r"gemini\b", re.I)),
+    ):
+        if pattern.search(text_lower):
+            return agent_type
+    return ""
 
 
-def _cmd_text(info: ProcessInfo) -> str:
-    return " ".join(info.cmdline).strip() or info.name
-
-
-def _detect_agent_type_from_text(text: str) -> str:
-    low = text.lower()
-    if "kimi-code" in low or "kimi" in low:
-        return "kimi-code"
-    if "claude-code" in low or "claude" in low:
-        return "claude"
-    for kw in ("codex", "aider", "gemini"):
-        if kw in low:
-            return kw
-    return "unknown"
-
-
-def _detect_agent_type(info: ProcessInfo) -> str:
-    return _detect_agent_type_from_text(f"{info.name} {_cmd_text(info)}")
-
-
-def _is_root_agent_proc(proc: psutil.Process) -> bool:
+def _proc_text(proc: psutil.Process) -> str:
     try:
-        text = f"{proc.name()} {' '.join(proc.cmdline())}"
+        return " ".join([proc.name(), *(proc.cmdline() or [])])
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return ""
+
+
+def _is_root_agent_process(proc: psutil.Process, text: str) -> bool:
+    if not _agent_type_from_text(text):
         return False
-    return _detect_agent_type_from_text(text) != "unknown"
-
-
-def _flatten_processes(root: ProcessInfo) -> list[ProcessInfo]:
-    result: list[ProcessInfo] = []
-    def walk(p: ProcessInfo) -> None:
-        result.append(p)
-        for child in p.children:
-            walk(child)
-    walk(root)
-    return result
-
-
-def _short_command(command: str, max_len: int = 96) -> str:
-    command = " ".join(command.split())
-    return command if len(command) <= max_len else command[: max_len - 3] + "..."
-
-
-def _git_root(cwd: str) -> str:
-    if not cwd or cwd == "unknown":
-        return cwd
     try:
-        result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True, timeout=3)
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        parent = proc.parent()
+        while parent:
+            if _agent_type_from_text(_proc_text(parent)):
+                return False
+            parent = parent.parent()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         pass
-    return cwd
-
-
-def _short_path(path: str) -> str:
-    home = str(Path.home())
-    if path.startswith(home + os.sep):
-        return "~" + path[len(home):]
-    marker = f"{os.sep}projects{os.sep}"
-    if marker in path:
-        first = path.split(marker, 1)[1].split(os.sep, 1)[0]
-        return f".../projects/{first}"
-    parts = Path(path).parts
-    return os.path.join("...", *parts[-3:]) if len(parts) > 4 else path
-
-
-def derive_project_name(cwd: str) -> ProjectNameInfo:
-    if not cwd or cwd == "unknown":
-        return ProjectNameInfo(display_name="unknown", project_dir=cwd or "", short_cwd="unknown")
-    project_dir = _git_root(cwd)
-    marker = f"{os.sep}projects{os.sep}"
-    if marker in project_dir:
-        head, tail = project_dir.split(marker, 1)
-        project_dir = f"{head}{marker}{tail.split(os.sep, 1)[0]}"
-    display = Path(project_dir).name or project_dir
-    base, workspace = display, ""
-    match = re.match(r"^\d+\.(?P<project>.+)_(?P<workspace>[A-Za-z0-9-]+)$", display)
-    if match:
-        base, workspace = match.group("project"), match.group("workspace")
-    return ProjectNameInfo(display_name=display, base_project=base, workspace=workspace, project_dir=project_dir, short_cwd=_short_path(project_dir))
-
-
-def _run_git(project_dir: str, args: list[str]) -> str:
-    try:
-        result = subprocess.run(["git"] + args, cwd=project_dir, capture_output=True, text=True, timeout=5)
-        return result.stdout.strip() if result.returncode == 0 else ""
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
-
-
-def _git_changed_files(project_dir: str) -> list[str]:
-    changed: set[str] = set()
-    for line in _run_git(project_dir, ["status", "--short"]).splitlines():
-        if len(line) > 2:
-            name = line[2:].strip()
-            changed.add(name.split(" -> ", 1)[-1])
-    changed.update(line.strip() for line in _run_git(project_dir, ["diff", "--name-only"]).splitlines() if line.strip())
-    return sorted(changed)
-
-
-def _recent_modified_files(project_dir: str, limit: int = 10) -> list[str]:
-    root = Path(project_dir)
-    if not root.is_dir():
-        return []
-    ignored = {".git", "node_modules", "__pycache__", ".venv", "logs", ".pytest_cache", "dist", "build"}
-    found: list[tuple[float, str]] = []
-    scanned = 0
-    try:
-        for path in root.rglob("*"):
-            scanned += 1
-            if scanned > 5000:
-                break
-            if not path.is_file() or any(part in ignored for part in path.parts):
-                continue
-            st = path.stat()
-            found.append((st.st_mtime, str(path.relative_to(root))))
-    except OSError:
-        return []
-    found.sort(key=lambda x: x[0], reverse=True)
-    return [name for _, name in found[:limit]]
-
-
-def _is_sensitive_log_candidate(path: Path) -> bool:
-    parts = {p.lower() for p in path.parts}
-    if parts & {"credentials", "credential", "secrets", "secret", "tokens", "token", "auth"}:
-        return True
-    name = path.name.lower()
-    return any(x in name for x in ("credential", "token", "secret", "auth", "models_cache", "config"))
-
-
-def _candidate_log_files(project_dir: str, agent_type: str) -> list[Path]:
-    project = Path(project_dir) if project_dir and project_dir != "unknown" else None
-    home = Path.home()
-    bases: list[Path] = []
-    if project:
-        bases += [project / ".codex", project / ".claude", project / ".kimi", project / ".kimi-code", project / ".agent", project / ".agent_foreman", project / "logs", project / "AGENT_LOG.md", project / "progress.md"]
-    bases += [home / ".codex" / "sessions", home / ".codex" / "logs", home / ".codex" / "log", home / ".codex" / "history.jsonl", home / ".claude" / "projects", home / ".claude" / "logs", home / ".kimi" / "logs", home / ".kimi" / "user-history", home / ".kimi-code" / "logs", home / ".kimi-code" / "user-history", get_log_dir()]
-    suffixes = {".log", ".jsonl", ".json", ".md", ".txt"}
-    candidates: list[Path] = []
-    for base in bases:
-        try:
-            if _is_sensitive_log_candidate(base):
-                continue
-            if base.is_file() and base.suffix.lower() in suffixes:
-                candidates.append(base)
-            elif base.is_dir():
-                for path in base.rglob("*"):
-                    if len(candidates) >= 80:
-                        break
-                    if path.is_file() and path.suffix.lower() in suffixes and not _is_sensitive_log_candidate(path):
-                        candidates.append(path)
-        except OSError:
-            continue
-    with_mtime = []
-    for path in candidates:
-        try:
-            with_mtime.append((path.stat().st_mtime, path))
-        except OSError:
-            pass
-    with_mtime.sort(key=lambda item: item[0], reverse=True)
-    return [path for _, path in with_mtime[:40]]
-
-
-def _read_tail_text(path: Path, max_bytes: int = 262_144) -> str:
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as f:
-            if size > max_bytes:
-                f.seek(size - max_bytes)
-            return f.read(max_bytes).decode("utf-8", errors="replace")
-    except OSError:
-        return ""
-
-
-def _extract_instruction_from_text(text: str, source: Path, mtime: float) -> list[InstructionInfo]:
-    items: list[InstructionInfo] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        parsed = None
-        if line.startswith("{") and '"role"' in line:
-            try:
-                obj = json.loads(line)
-                if str(obj.get("role", "")).lower() == "user":
-                    content = obj.get("content")
-                    parsed = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        if parsed is None:
-            match = INSTRUCTION_LABEL_RE.match(line)
-            if match:
-                parsed = match.group(1).strip()
-        if parsed:
-            items.append(InstructionInfo(text=parsed[:2000], source_file=str(source), source_type="agent transcript", timestamp=datetime.fromtimestamp(mtime), confidence=0.8))
-    return items
-
-
-def extract_user_instruction(session: DiscoveredSession) -> InstructionInfo:
-    candidates: list[InstructionInfo] = []
-    for path in _candidate_log_files(session.project.project_dir or session.cwd, session.agent_type):
-        try:
-            candidates += _extract_instruction_from_text(_read_tail_text(path), path, path.stat().st_mtime)
-        except OSError:
-            continue
-        if len(candidates) >= 20:
-            break
-    candidates.sort(key=lambda c: c.timestamp or datetime.min, reverse=True)
-    session.instruction_candidates = candidates[:5]
-    return candidates[0] if candidates else InstructionInfo()
-
-
-def _collect_active_commands(processes: list[ProcessInfo], root_pid: int) -> list[str]:
-    active = []
-    needles = ("pytest", "npm", "pnpm", "yarn", "git", "python", "rscript", "bash", "node", "rg", "grep", "find", "fd", "uv")
-    for proc in processes:
-        if proc.pid == root_pid:
-            continue
-        text = _cmd_text(proc)
-        if any(n in text.lower() for n in needles):
-            active.append(text)
-    return active[:8]
-
-
-def get_project_runtime_status(project_dir: str, processes: list[ProcessInfo], recent_logs: list[str]) -> ProjectRuntimeStatus:
-    changed = _git_changed_files(project_dir) if project_dir and Path(project_dir).is_dir() else []
-    branch = _run_git(project_dir, ["branch", "--show-current"]) if project_dir and Path(project_dir).is_dir() else ""
-    recent = _recent_modified_files(project_dir)
-    tests, servers = [], []
-    for proc in processes:
-        cmd = _cmd_text(proc)
-        low = cmd.lower()
-        if "pytest" in low or "npm test" in low or "pnpm test" in low or "yarn test" in low:
-            tests.append(_short_command(cmd))
-        if any(x in low for x in ("vite", "uvicorn", "streamlit", "jupyter", "rstudio-server")):
-            servers.append(_short_command(cmd))
-    errors = [line[-300:] for line in recent_logs if ERROR_RE.search(line)][-5:]
-    last = None
-    if recent:
-        try:
-            last = datetime.fromtimestamp((Path(project_dir) / recent[0]).stat().st_mtime)
-        except OSError:
-            pass
-    return ProjectRuntimeStatus(git_branch=branch, git_dirty_files_count=len(changed), git_changed_files=changed[:30], recent_modified_files=recent, test_processes=tests[:5], server_processes=servers[:5], error_hints=errors, last_activity_time=last)
-
-
-def infer_session_activity(
-    processes: list[ProcessInfo],
-    project_status: ProjectRuntimeStatus,
-    recent_logs: list[str],
-    root_pid: int,
-    heartbeat_ts: float | None = None,
-    recent_output: str = "",
-) -> tuple[TaskStatus, str, str]:
-    active = _collect_active_commands(processes, root_pid)
-    blob = "\n".join(active).lower()
-    log_blob = "\n".join(recent_logs[-30:] + ([recent_output] if recent_output else []))
-    if WAITING_RE.search(log_blob):
-        return TaskStatus.waiting_input, "waiting prompt detected in output", "Possibly waiting for user input"
-    if "pytest" in blob:
-        return TaskStatus.testing, "pytest child process detected", f"Running tests: {_short_command(active[0])}"
-    if any(x in blob for x in ("npm test", "pnpm test", "yarn test")):
-        return TaskStatus.testing, "frontend test child process detected", "Running frontend tests"
-    if "git" in blob:
-        return TaskStatus.git_ops, "git child process detected", f"Inspecting or modifying git state: {_short_command(active[0])}"
-    if any(x in blob for x in ("rg", "grep", "find", "fd")):
-        return TaskStatus.searching, "search child process detected", "Searching codebase"
-    if any(x in blob for x in ("python", "rscript", "bash", "node", "uv")):
-        return TaskStatus.running_script, "script child process detected", f"Running script: {_short_command(active[0])}"
-    if project_status.last_activity_time and datetime.now() - project_status.last_activity_time <= timedelta(seconds=60):
-        return TaskStatus.editing, "project file modified within 60s", "Editing files: " + ", ".join(project_status.recent_modified_files[:3])
-    cpu = sum(p.cpu_percent for p in processes)
-    if heartbeat_ts and time.time() - heartbeat_ts <= 60:
-        return TaskStatus.busy, "heartbeat updated within 60s", "Agent is active"
-    if cpu > 3:
-        return TaskStatus.busy, "CPU above 3%", "Agent is active"
-    return TaskStatus.idle, "no CPU/child/file activity detected", "No recent activity; possibly waiting or idle"
+    return True
 
 
 def discover_agent_processes() -> list[ProcessInfo]:
-    """Scan all running processes and find coding agent root processes."""
+    """Scan running processes and find top-level coding agent roots."""
     results = []
     seen_pids: set[int] = set()
 
     for proc in psutil.process_iter(attrs=["pid", "name", "cmdline"]):
         try:
-            if not _is_root_agent_proc(proc):
+            cmdline_list = proc.info.get("cmdline") or []
+            name = proc.info.get("name") or ""
+            text = " ".join([name, *cmdline_list])
+            if not _is_root_agent_process(proc, text):
                 continue
 
             pid = proc.info["pid"]
@@ -425,58 +211,461 @@ def discover_agent_processes() -> list[ProcessInfo]:
     return results
 
 
-def scan_agent_sessions() -> list[DiscoveredSession]:
-    roots = discover_agent_processes()
-    sessions: list[DiscoveredSession] = []
+def _detect_agent_type(info: ProcessInfo) -> str:
+    """Detect the agent type from process name/cmdline."""
+    return _agent_type_from_text(" ".join([info.name, *info.cmdline])) or "unknown"
+
+
+def _detect_agent_type_from_text(text: str) -> str:
+    """Detect agent type from arbitrary text (cmdline, session file content)."""
+    text_lower = text.lower()
+    for kw in ("codex", "claude-code", "claude", "aider", "gemini", "kimi-code", "kimi"):
+        if kw in text_lower:
+            return kw
+    return ""
+
+
+def _git_root(cwd: str) -> Optional[str]:
+    """Find the git root directory for a given cwd."""
+    if not cwd or not os.path.isdir(cwd):
+        return None
+    return get_git_root(cwd)
+
+
+def derive_project_name(cwd: str) -> ProjectNameInfo:
+    """Derive a human-readable project name from the cwd."""
+    if not cwd:
+        return ProjectNameInfo(name="unknown", short_cwd="unknown")
+
+    git_root = _git_root(cwd)
+    git_branch = None
+    if git_root:
+        git_branch = get_git_branch(git_root) or None
+
+    # Use git root basename if available, otherwise cwd basename
+    if git_root:
+        name = os.path.basename(git_root)
+    else:
+        name = os.path.basename(cwd)
+
+    # Short cwd: show last 2-3 components
+    parts = cwd.rstrip("/").split("/")
+    short_cwd = "/".join(parts[-3:]) if len(parts) > 3 else cwd
+
+    return ProjectNameInfo(
+        name=name or "unknown",
+        short_cwd=short_cwd or cwd,
+        git_root=git_root,
+        git_branch=git_branch,
+    )
+
+
+def _recent_modified_files(cwd: str, seconds: int = 60) -> list[str]:
+    """Find files modified in the last N seconds under cwd."""
+    if not cwd or not os.path.isdir(cwd):
+        return []
+    cutoff = time.time() - seconds
+    modified = []
+    try:
+        for root, dirs, files in os.walk(cwd):
+            # Skip hidden dirs and common non-project dirs
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__", "venv", ".venv")]
+            for f in files:
+                fpath = os.path.join(root, f)
+                try:
+                    if os.path.getmtime(fpath) >= cutoff:
+                        modified.append(os.path.relpath(fpath, cwd))
+                except OSError:
+                    continue
+    except Exception:
+        pass
+    return modified[:20]  # Cap at 20
+
+
+def _candidate_log_files(project_dir: str) -> list[Path]:
+    """Find candidate log files for a project."""
+    candidates = []
+    roots: list[Path] = []
+    if project_dir:
+        p = Path(project_dir)
+        roots.extend([p / "logs", p / ".codex", p / ".claude", p / ".kimi", p / ".kimi-code"])
+        git_root = get_git_root(project_dir)
+        if git_root:
+            gp = Path(git_root)
+            roots.extend([gp / "logs", gp / ".codex", gp / ".claude", gp / ".kimi", gp / ".kimi-code"])
+    roots.append(Path.home() / "agent_logs")
+
+    seen: set[Path] = set()
     for root in roots:
-        cwd = root.cwd or "unknown"
-        project = derive_project_name(cwd)
-        processes = _flatten_processes(root)
-        h = hashlib.md5(f"{project.project_dir}:{root.pid}:{root.create_time}".encode()).hexdigest()[:10]
-        session = DiscoveredSession(
-            session_id=f"agent-{h}",
-            cwd=cwd,
-            root_process=root,
-            all_pids=sorted({p.pid for p in processes}),
-            agent_type=_detect_agent_type(root),
-            root_pid=root.pid,
-            root_cmd=_cmd_text(root),
-            user=root.user,
-            project_name=project.display_name,
-            project=project,
-            short_cwd=project.short_cwd,
-            started_at=datetime.fromtimestamp(root.create_time) if root.create_time else None,
-            elapsed=root.elapsed,
-            child_processes=[p for p in processes if p.pid != root.pid],
-            active_commands=_collect_active_commands(processes, root.pid),
-            cpu_percent=sum(p.cpu_percent for p in processes),
-            memory_percent=sum(p.memory_percent for p in processes),
+        try:
+            root = root.expanduser().resolve()
+        except OSError:
+            continue
+        if root in seen or not root.exists():
+            continue
+        seen.add(root)
+        try:
+            for pattern in ("*.log", "*.jsonl"):
+                for f in root.rglob(pattern):
+                    if f.is_file():
+                        candidates.append(f)
+        except PermissionError:
+            pass
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[:20]
+
+
+def _extract_instruction_from_text(text: str) -> str:
+    """Extract user instruction from text using regex patterns."""
+    if not text:
+        return ""
+    # Try labeled patterns
+    match = INSTRUCTION_LABEL_RE.search(text)
+    if match:
+        return match.group(1).strip()[:180]
+    # If text is short enough, it might be an instruction itself
+    cleaned = " ".join(text.split())
+    if len(cleaned) < 180 and not cleaned.startswith(("tool:", "Traceback", "Error")):
+        return cleaned
+    return ""
+
+
+def extract_user_instruction(
+    project_dir: str,
+    agent_type: str,
+    session_data: dict | None = None,
+) -> InstructionInfo:
+    """Extract the user's instruction/intent from available sources.
+
+    Priority: session file last_user_message > log file > process cmdline
+    """
+    # 1. Session file data (highest confidence)
+    if session_data and session_data.get("last_user_message"):
+        return InstructionInfo(
+            text=session_data["last_user_message"],
+            source="session_file",
+            source_file=session_data.get("source_file", ""),
             confidence=0.9,
         )
-        session.log_candidates = [str(p) for p in _candidate_log_files(project.project_dir or cwd, session.agent_type)[:8]]
-        for log_path in session.log_candidates[:3]:
-            session.recent_logs.extend(get_log_tail(Path(log_path), lines=20))
-        session.recent_logs = session.recent_logs[-60:]
-        session.project_status = get_project_runtime_status(project.project_dir or cwd, processes, session.recent_logs)
-        session.git_status = {"branch": session.project_status.git_branch, "dirty_files": session.project_status.git_dirty_files_count, "changed_files": session.project_status.git_changed_files}
-        session.recent_changed_files = session.project_status.recent_modified_files
-        session.error_hints = session.project_status.error_hints
-        status, reason, activity = infer_session_activity(processes, session.project_status, session.recent_logs, root.pid)
-        session.status, session.status_reason, session.current_activity = status, reason, activity
-        instruction = extract_user_instruction(session)
-        session.instruction = instruction
-        session.user_instruction = instruction.text
-        session.instruction_source = instruction.source_file
-        session.timeline = [ActivityTimelineItem(timestamp=session.started_at or datetime.now(), label=f"started {session.agent_type}", source="process")]
-        if session.project_status.last_activity_time:
-            session.timeline.append(ActivityTimelineItem(timestamp=session.project_status.last_activity_time, label=session.current_activity, source="project"))
-        sessions.append(session)
-    sessions.sort(key=lambda s: (s.project_name.lower(), s.root_pid))
-    return sessions
+
+    # 2. Log files
+    log_files = _candidate_log_files(project_dir)
+    for log_file in log_files[:5]:
+        try:
+            content = log_file.read_text(encoding="utf-8", errors="ignore")
+            instruction = _extract_instruction_from_text(content)
+            if instruction:
+                return InstructionInfo(
+                    text=instruction,
+                    source="log_file",
+                    source_file=str(log_file),
+                    confidence=0.6,
+                )
+        except Exception:
+            continue
+
+    return InstructionInfo(text="未找到原始指令", source="", source_file="", confidence=0.0)
+
+
+def _collect_active_commands(info: ProcessInfo) -> list[str]:
+    """Collect active commands from a process tree."""
+    commands = []
+    if info.cmdline:
+        cmd = " ".join(info.cmdline[:5])
+        commands.append(cmd[:120])
+    for child in info.children:
+        if child.cmdline:
+            cmd = " ".join(child.cmdline[:5])
+            commands.append(cmd[:120])
+    return commands[:10]
+
+
+def get_project_runtime_status(project_dir: str, recent_files: list[str] | None = None) -> ProjectRuntimeStatus:
+    """Get runtime status of a project directory."""
+    if not project_dir or not os.path.isdir(project_dir):
+        return ProjectRuntimeStatus()
+
+    git_root = get_git_root(project_dir) or project_dir
+    dirty = get_changed_files(git_root)
+    status_short = get_git_status_short(git_root)
+    has_uncommitted = bool(status_short)
+    has_untracked = any(line.startswith("??") for line in status_short.splitlines())
+
+    test_status = "unknown"
+
+    return ProjectRuntimeStatus(
+        dirty_files=dirty[:20],
+        has_uncommitted=has_uncommitted,
+        has_untracked=has_untracked,
+        test_status=test_status,
+        branch=get_git_branch(git_root),
+        recent_files=(recent_files or [])[:20],
+    )
+
+
+def infer_session_activity(
+    info: ProcessInfo,
+    recent_output: str = "",
+    heartbeat_ts: float | None = None,
+    recent_files: list[str] | None = None,
+    has_error_hint: bool = False,
+) -> tuple[str, str]:
+    """Infer what the agent is currently doing.
+
+    Returns (activity, reason) tuple.
+
+    Priority chain:
+    1. needs_input (regex on recent_output)
+    2. error_hint (recent output contains an error marker)
+    3. testing/searching/git_ops/running_script (child process)
+    4. editing (file modified in last 60s)
+    5. busy (CPU >= 3% or heartbeat <= 120s)
+    6. stale (heartbeat >= 900s)
+    7. idle (default)
+    """
+    now = time.time()
+
+    # 1. Needs input detection
+    if recent_output and WAITING_RE.search(recent_output):
+        return "needs_input", "可能在等待用户确认或补充信息"
+
+    if has_error_hint or (recent_output and ERROR_RE.search(recent_output)):
+        return "error_hint", "最近输出出现错误提示"
+
+    # 2-5. Check child processes for specific activities
+    child_activity = _check_child_processes(info)
+    if child_activity:
+        return child_activity
+
+    # 6. Editing detection (recent file modifications)
+    if recent_files:
+        return "editing", f"正在修改 {', '.join(recent_files[:3])}"
+
+    # 7. Busy detection
+    if info.cpu_percent >= 3.0:
+        return "busy", f"CPU 活跃：{info.cpu_percent:.1f}%"
+
+    if heartbeat_ts:
+        age = now - heartbeat_ts
+        if age <= 120:
+            return "busy", f"最近 {int(age)} 秒内有新输出"
+
+    # 8. Stale detection
+    if heartbeat_ts:
+        age = now - heartbeat_ts
+        if age >= 900:
+            return "stale", f"{int(age // 60)} 分钟无新输出，可能空闲"
+
+    # 9. Default idle
+    return "idle", "CPU 很低，且未检测到子进程或新输出"
+
+
+def _iter_process_tree(info: ProcessInfo) -> list[ProcessInfo]:
+    items = []
+    for child in info.children:
+        items.append(child)
+        items.extend(_iter_process_tree(child))
+    return items
+
+
+def _cmd_basename(cmd: str) -> str:
+    return os.path.basename(cmd).lower()
+
+
+def _check_child_processes(info: ProcessInfo) -> tuple[str, str] | None:
+    """Check child processes for specific activity patterns."""
+    for child in _iter_process_tree(info):
+        cmd_lower = " ".join(child.cmdline).lower() if child.cmdline else ""
+        name_lower = child.name.lower()
+        argv0 = _cmd_basename(child.cmdline[0]) if child.cmdline else name_lower
+
+        # Testing
+        if any(kw in cmd_lower for kw in ("pytest", "npm test", "jest", "vitest", "cargo test", "go test")):
+            return "testing", f"正在跑测试：{' '.join(child.cmdline[:3]) if child.cmdline else child.name}"
+
+        # Git operations
+        if name_lower == "git" or argv0 == "git":
+            return "git_ops", f"正在执行 git：{' '.join(child.cmdline[:3]) if child.cmdline else 'git'}"
+
+        # Searching
+        if argv0 in {"rg", "grep", "ag", "find", "fd"} or name_lower in {"rg", "grep", "ag", "find", "fd"}:
+            return "searching", f"正在搜索代码库：{' '.join(child.cmdline[:3]) if child.cmdline else child.name}"
+
+        # Running scripts
+        if argv0 in {"python", "python3", "rscript", "bash", "node", "npm", "pnpm", "bun"} or "npm run" in cmd_lower:
+            return "running_script", f"正在运行脚本：{' '.join(child.cmdline[:3]) if child.cmdline else child.name}"
+
+    return None
 
 
 def discover_sessions() -> list[DiscoveredSession]:
-    return scan_agent_sessions()
+    """Discover agent processes and group them by cwd into sessions.
+
+    Each session represents a project directory with one or more agent processes.
+    The process with the lowest PID in each cwd group becomes the root_process.
+    """
+    procs = discover_agent_processes()
+    if not procs:
+        return []
+
+    # Group by cwd
+    by_cwd: dict[str, list[ProcessInfo]] = {}
+    for p in procs:
+        cwd = p.cwd or "unknown"
+        by_cwd.setdefault(cwd, []).append(p)
+
+    sessions: list[DiscoveredSession] = []
+    for cwd, group in by_cwd.items():
+        # Sort by PID, pick lowest as root
+        group.sort(key=lambda p: p.pid)
+        root = group[0]
+        all_pids = [p.pid for p in group]
+
+        # Also collect child PIDs recursively
+        def _collect_pids(pi: ProcessInfo) -> list[int]:
+            pids = [pi.pid]
+            for c in pi.children:
+                pids.extend(_collect_pids(c))
+            return pids
+
+        all_pids_set: set[int] = set()
+        for p in group:
+            all_pids_set.update(_collect_pids(p))
+
+        # Generate session_id from cwd
+        if cwd == "unknown":
+            session_id = f"unknown-{root.pid}"
+        else:
+            h = hashlib.md5(cwd.encode()).hexdigest()[:8]
+            session_id = f"discovered-{h}"
+
+        sessions.append(DiscoveredSession(
+            session_id=session_id,
+            cwd=cwd,
+            root_process=root,
+            all_pids=sorted(all_pids_set),
+            agent_type=_detect_agent_type(root),
+        ))
+
+    # Sort by cwd for stable ordering
+    sessions.sort(key=lambda s: s.cwd)
+    return sessions
+
+
+def scan_agent_sessions() -> list[DiscoveredSession]:
+    """Main enrichment pipeline: discover processes → parse session files → extract info → infer activity.
+
+    This is the primary entry point for the SSE endpoint.
+    """
+    sessions = discover_sessions()
+    if not sessions:
+        return []
+
+    enriched: list[DiscoveredSession] = []
+    for session in sessions:
+        cwd = session.cwd if session.cwd != "unknown" else ""
+        agent_type = session.agent_type
+        root = session.root_process
+
+        # 1. Derive project name
+        project_name = derive_project_name(cwd)
+        session.project_name = project_name
+        session.project = project_name.name
+
+        # 2. Parse session files (heartbeat, recent_output, pending_items)
+        session_data = None
+        if agent_type and agent_type != "unknown":
+            from backend.session_parser import parse_and_match_sessions
+            session_data = parse_and_match_sessions(
+                agent_type, cwd, root.create_time
+            )
+            if session_data:
+                session.heartbeat_ts = session_data.get("heartbeat_ts")
+                session.recent_output = session_data.get("recent_output", "")
+                session.pending_items = session_data.get("pending_items", [])
+                session.last_user_message = session_data.get("last_user_message", "")
+                if session_data.get("git_branch"):
+                    session.project_name.git_branch = session_data["git_branch"]
+
+        # 3. Compute heartbeat age
+        if session.heartbeat_ts:
+            session.heartbeat_age_sec = time.time() - session.heartbeat_ts
+
+        # 4. Recent file modifications
+        recent_files = _recent_modified_files(cwd, seconds=60) if cwd else []
+
+        # 5. Infer activity status
+        if session.recent_output:
+            error_matches = ERROR_RE.findall(session.recent_output)
+            if error_matches:
+                session.error_hints = list(dict.fromkeys(error_matches))[:5]
+
+        activity, reason = infer_session_activity(
+            root,
+            recent_output=session.recent_output,
+            heartbeat_ts=session.heartbeat_ts,
+            recent_files=recent_files,
+            has_error_hint=bool(session.error_hints),
+        )
+        session.status = activity
+        session.status_reason = reason
+        session.current_activity = reason
+
+        # 6. Extract user instruction
+        instruction = extract_user_instruction(cwd, agent_type, session_data)
+        session.instruction = instruction
+        session.user_instruction = instruction.text
+        session.source_file = instruction.source_file or (session_data or {}).get("source_file", "")
+        session.confidence = instruction.confidence
+
+        # 7. Collect active commands and child processes
+        session.active_commands = _collect_active_commands(root)
+        session.child_processes = root.children
+
+        # 8. Resource metrics
+        session.cpu_percent = root.cpu_percent
+        session.memory_percent = root.memory_percent
+
+        # 9. Project runtime status
+        if cwd:
+            session.project_status = get_project_runtime_status(cwd, recent_files)
+            session.git_status = "dirty" if session.project_status.has_uncommitted else "clean"
+            if session.project_status.branch and not session.project_name.git_branch:
+                session.project_name.git_branch = session.project_status.branch
+        session.recent_files = recent_files[:20]
+
+        # 11. Build timeline
+        timeline: list[ActivityTimelineItem] = []
+        if session.heartbeat_ts:
+            timeline.append(ActivityTimelineItem(
+                ts=session.heartbeat_ts,
+                event="heartbeat",
+                detail=session.recent_output[:120] if session.recent_output else "",
+            ))
+        for child in root.children:
+            if child.cmdline:
+                timeline.append(ActivityTimelineItem(
+                    ts=child.create_time,
+                    event="child_process",
+                    detail=" ".join(child.cmdline[:3])[:120],
+                ))
+        timeline.sort(key=lambda x: x.ts, reverse=True)
+        session.timeline = timeline[:10]
+
+        # 12. Recent logs (last few lines from log files)
+        if cwd:
+            log_files = _candidate_log_files(cwd)
+            if log_files:
+                try:
+                    content = log_files[0].read_text(encoding="utf-8", errors="ignore")
+                    lines = content.strip().split("\n")
+                    session.recent_logs = lines[-10:]
+                except Exception:
+                    pass
+
+        enriched.append(session)
+
+    return enriched
 
 
 def get_process_cpu_mem(pid: int) -> tuple[float, float]:

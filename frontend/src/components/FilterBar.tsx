@@ -12,40 +12,46 @@ interface FilterBarProps {
 }
 
 const ALL_STATUSES: TaskStatus[] = [
-  'running', 'busy', 'testing', 'editing', 'searching', 'git_ops',
-  'running_script', 'waiting', 'idle', 'completed', 'failed', 'unknown'
+  'running', 'busy', 'needs_input', 'testing', 'editing', 'searching', 'git_ops',
+  'running_script', 'waiting', 'idle', 'stale', 'error_hint', 'waiting_input', 'completed', 'failed', 'unknown'
 ]
 
 const STATUS_COLORS: Record<TaskStatus, string> = {
-  running:       'bg-green-600 text-green-100 border-green-500',
-  busy:          'bg-cyan-700 text-cyan-100 border-cyan-500',
-  testing:       'bg-purple-700 text-purple-100 border-purple-500',
-  editing:       'bg-emerald-700 text-emerald-100 border-emerald-500',
-  searching:     'bg-sky-700 text-sky-100 border-sky-500',
-  git_ops:       'bg-indigo-700 text-indigo-100 border-indigo-500',
-  running_script:'bg-teal-700 text-teal-100 border-teal-500',
-  waiting:       'bg-orange-600 text-orange-100 border-orange-500',
-  idle:          'bg-yellow-600 text-yellow-100 border-yellow-500',
-  waiting_input: 'bg-orange-600 text-orange-100 border-orange-500',
-  completed:     'bg-blue-600 text-blue-100 border-blue-500',
-  failed:        'bg-red-600 text-red-100 border-red-500',
-  unknown:       'bg-gray-600 text-gray-100 border-gray-500',
+  running:        'bg-green-600 text-green-100 border-green-500',
+  busy:           'bg-emerald-600 text-emerald-100 border-emerald-500',
+  needs_input:    'bg-orange-600 text-orange-100 border-orange-500',
+  testing:        'bg-cyan-600 text-cyan-100 border-cyan-500',
+  editing:        'bg-teal-600 text-teal-100 border-teal-500',
+  searching:      'bg-sky-600 text-sky-100 border-sky-500',
+  git_ops:        'bg-indigo-600 text-indigo-100 border-indigo-500',
+  running_script: 'bg-violet-600 text-violet-100 border-violet-500',
+  waiting:        'bg-amber-600 text-amber-100 border-amber-500',
+  idle:           'bg-yellow-600 text-yellow-100 border-yellow-500',
+  stale:          'bg-gray-700 text-gray-100 border-gray-600',
+  error_hint:     'bg-red-600 text-red-100 border-red-500',
+  waiting_input:  'bg-orange-600 text-orange-100 border-orange-500',
+  completed:      'bg-blue-600 text-blue-100 border-blue-500',
+  failed:         'bg-red-600 text-red-100 border-red-500',
+  unknown:        'bg-gray-600 text-gray-100 border-gray-500',
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  running: 'Running',
-  busy: 'Busy',
-  testing: 'Testing',
-  editing: 'Editing',
-  searching: 'Search',
-  git_ops: 'Git',
-  running_script: 'Script',
-  waiting: 'Waiting',
-  idle: 'Idle',
-  waiting_input: 'Waiting',
-  completed: 'Done',
-  failed: 'Failed',
-  unknown: 'Unknown',
+  running: '运行中',
+  busy: '忙碌',
+  needs_input: '等输入',
+  testing: '测试中',
+  editing: '编辑中',
+  searching: '搜索中',
+  git_ops: 'Git操作',
+  running_script: '脚本运行',
+  waiting: '等待中',
+  idle: '空闲',
+  stale: '失联',
+  error_hint: '有错误',
+  waiting_input: '等输入',
+  completed: '已完成',
+  failed: '失败',
+  unknown: '未知',
 }
 
 export function FilterBar({
@@ -73,7 +79,7 @@ export function FilterBar({
               : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-gray-500'
           }`}
         >
-          Running Only
+          仅活跃
         </button>
 
         {ALL_STATUSES.map(s => (
@@ -99,7 +105,7 @@ export function FilterBar({
         type="text"
         value={search}
         onChange={e => onSearchChange(e.target.value)}
-        placeholder="Search by name, command, project dir, or task ID..."
+        placeholder="搜索名称、命令、目录或任务ID..."
         className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-gray-500"
       />
     </div>

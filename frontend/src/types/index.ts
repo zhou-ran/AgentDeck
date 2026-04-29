@@ -1,6 +1,7 @@
 export type TaskStatus =
   | 'running'
   | 'busy'
+  | 'needs_input'
   | 'testing'
   | 'editing'
   | 'searching'
@@ -8,9 +9,24 @@ export type TaskStatus =
   | 'running_script'
   | 'waiting'
   | 'idle'
+  | 'stale'
+  | 'error_hint'
   | 'waiting_input'
   | 'completed'
   | 'failed'
+  | 'unknown'
+
+export type SessionStatus =
+  | 'needs_input'
+  | 'testing'
+  | 'editing'
+  | 'searching'
+  | 'git_ops'
+  | 'running_script'
+  | 'busy'
+  | 'idle'
+  | 'stale'
+  | 'error_hint'
   | 'unknown'
 
 export interface PlanStep {
@@ -44,6 +60,35 @@ export interface CpuMemSample {
   mem: number
 }
 
+export interface ProjectNameInfo {
+  name: string
+  short_cwd: string
+  git_root: string | null
+  git_branch: string | null
+}
+
+export interface InstructionInfo {
+  text: string
+  source: string
+  source_file: string
+  confidence: number
+}
+
+export interface ProjectRuntimeStatus {
+  dirty_files: string[]
+  has_uncommitted: boolean
+  has_untracked: boolean
+  test_status: string
+  branch: string
+  recent_files: string[]
+}
+
+export interface ActivityTimelineItem {
+  ts: number
+  event: string
+  detail: string
+}
+
 export interface Task {
   task_id: string
   name: string
@@ -54,13 +99,6 @@ export interface Task {
   started_at: string
   ended_at: string | null
   last_log_update: string | null
-  status_reason: string
-  current_activity: string
-  agent_type: string
-  project_name: string
-  short_cwd: string
-  user_instruction: string | null
-  instruction_source: string
 
   // Structured task fields
   goal: string
@@ -73,6 +111,15 @@ export interface Task {
   changed_files: string[]
   risk_notes: string
   final_summary: string
+
+  // Enriched fields
+  status_reason: string
+  current_activity: string
+  agent_type: string
+  project_name: string
+  short_cwd: string
+  user_instruction: string
+  instruction_source: string
 
   // Legacy
   exit_code: number | null
@@ -107,66 +154,44 @@ export interface DiscoveredSession {
   root_process: ProcessInfo
   all_pids: number[]
   agent_type: string
-  root_pid: number
-  root_cmd: string
-  user: string
-  project_name: string
-  project: ProjectNameInfo
-  short_cwd: string
-  started_at: string | null
-  elapsed: string
-  status: TaskStatus
+
+  // Enriched fields
+  project_name: ProjectNameInfo
+  project: string
+  status: string
   status_reason: string
   current_activity: string
-  user_instruction: string | null
+  user_instruction: string
   instruction: InstructionInfo
-  instruction_source: string
-  instruction_candidates: InstructionInfo[]
   child_processes: ProcessInfo[]
   active_commands: string[]
+
+  // Heartbeat
+  heartbeat_ts: number | null
+  heartbeat_age_sec: number | null
+
+  // Session file data
+  recent_output: string
+  pending_items: string[]
+  last_user_message: string
+  source_file: string
+  confidence: number
+
+  // Resource metrics
   cpu_percent: number
   memory_percent: number
-  log_candidates: string[]
-  recent_logs: string[]
+
+  // Project status
   project_status: ProjectRuntimeStatus
-  git_status: Record<string, unknown>
-  recent_changed_files: string[]
+  git_status: string
   error_hints: string[]
-  confidence: number
+  recent_files: string[]
+
+  // Timeline
   timeline: ActivityTimelineItem[]
-}
 
-export interface ProjectNameInfo {
-  display_name: string
-  base_project: string
-  workspace: string
-  project_dir: string
-  short_cwd: string
-}
-
-export interface InstructionInfo {
-  text: string | null
-  source_file: string
-  source_type: string
-  timestamp: string | null
-  confidence: number
-}
-
-export interface ProjectRuntimeStatus {
-  git_branch: string
-  git_dirty_files_count: number
-  git_changed_files: string[]
-  recent_modified_files: string[]
-  test_processes: string[]
-  server_processes: string[]
-  error_hints: string[]
-  last_activity_time: string | null
-}
-
-export interface ActivityTimelineItem {
-  timestamp: string
-  label: string
-  source: string
+  // Logs
+  recent_logs: string[]
 }
 
 export interface LogResponse {

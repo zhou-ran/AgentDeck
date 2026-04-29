@@ -4,7 +4,6 @@ Provides:
 - Path traversal prevention
 - Symlink detection for project directories
 - Atomic file writes
-- Safe PID verification before kill
 - Input sanitization for task IDs
 - Token management with env var support
 - Simple rate limiter
@@ -18,9 +17,6 @@ import secrets
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional
-
-import psutil
 
 # --- Constants ---
 
@@ -139,56 +135,6 @@ def atomic_write(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
-
-
-# --- Safe PID Verification ---
-
-def verify_pid_for_task(pid: int, task_command: str, task_project_dir: str) -> tuple[bool, str]:
-    """Verify a PID is still the process we think it is before killing.
-
-    Checks:
-    1. PID exists
-    2. Command line has basic overlap with stored command
-    3. CWD matches task project_dir or is a subdirectory
-
-    Returns (is_safe, reason).
-    """
-    try:
-        proc = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return False, "Process no longer exists"
-    except psutil.AccessDenied:
-        return False, "Permission denied to inspect process"
-
-    # Check command line overlap
-    try:
-        cmdline = proc.cmdline()
-        cmdline_str = " ".join(cmdline).lower()
-        # Extract the base command from task_command
-        task_cmd_lower = task_command.lower().strip()
-        # Take first token as the base command
-        task_base = task_cmd_lower.split()[0] if task_cmd_lower else ""
-        # Check if the base command appears in the current cmdline
-        if task_base and task_base not in cmdline_str:
-            # Also check the process name
-            proc_name = (proc.name() or "").lower()
-            if task_base not in proc_name:
-                return False, f"Command mismatch: expected '{task_base}', got '{cmdline_str[:100]}'"
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass  # If we can't check, proceed with caution
-
-    # Check CWD matches
-    try:
-        proc_cwd = proc.cwd()
-        task_dir = Path(task_project_dir).resolve()
-        proc_dir = Path(proc_cwd).resolve()
-        # Must be same directory or subdirectory
-        if proc_dir != task_dir and not str(proc_dir).startswith(str(task_dir) + os.sep):
-            return False, f"CWD mismatch: process is in '{proc_cwd}', task expects '{task_project_dir}'"
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        pass  # If we can't check cwd, proceed
-
-    return True, ""
 
 
 # --- Token Management ---

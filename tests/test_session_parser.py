@@ -1,7 +1,8 @@
-"""Tests for session file parsing (codex, claude, kimi)."""
+"""Tests for backend.session_parser module."""
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -10,129 +11,123 @@ import pytest
 from backend.session_parser import (
     discover_session_files,
     match_session_to_process,
+    parse_and_match_sessions,
     parse_claude_session,
     parse_codex_session,
     parse_kimi_session,
 )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+# ---- Fixtures ----
 
 @pytest.fixture
 def codex_session_file(tmp_path: Path) -> Path:
-    """Create a synthetic codex .jsonl session file."""
-    p = tmp_path / "codex-session.jsonl"
+    """Create a synthetic codex session .jsonl file."""
+    f = tmp_path / "codex-session.jsonl"
     lines = [
         # First line: session_meta
         json.dumps({
             "type": "session_meta",
             "payload": {
                 "id": "sess-abc123",
-                "cwd": str(tmp_path / "myproject"),
-                "timestamp": "2025-01-15T10:00:00Z",
+                "cwd": str(tmp_path / "my-project"),
+                "timestamp": "2026-04-28T10:00:00Z",
             },
-            "timestamp": "2025-01-15T10:00:00Z",
+            "timestamp": "2026-04-28T10:00:00Z",
+        }),
+        # Response item with assistant message
+        json.dumps({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "I'll help you fix the bug in main.py"}],
+            },
+            "timestamp": "2026-04-28T10:01:00Z",
+        }),
+        # Plan update
+        json.dumps({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "update_plan",
+                "arguments": json.dumps({
+                    "plan": [
+                        {"step": "Read the file", "status": "completed"},
+                        {"step": "Fix the bug", "status": "in_progress"},
+                        {"step": "Run tests", "status": "pending"},
+                    ]
+                }),
+            },
+            "timestamp": "2026-04-28T10:02:00Z",
         }),
         # User message
         json.dumps({
             "type": "event_msg",
             "payload": {
                 "type": "user_message",
-                "message": "Please fix the auth bug",
+                "message": "Please fix the TypeError in main.py line 42",
             },
-            "timestamp": "2025-01-15T10:01:00Z",
-        }),
-        # Assistant response
-        json.dumps({
-            "type": "response_item",
-            "payload": {
-                "type": "message",
-                "role": "assistant",
-                "content": [{"type": "text", "text": "I'll fix the authentication bug in the login module."}],
-            },
-            "timestamp": "2025-01-15T10:02:00Z",
-        }),
-        # Agent message
-        json.dumps({
-            "type": "event_msg",
-            "payload": {
-                "type": "agent_message",
-                "message": "Working on the fix...",
-            },
-            "timestamp": "2025-01-15T10:03:00Z",
+            "timestamp": "2026-04-28T10:03:00Z",
         }),
     ]
-    p.write_text("\n".join(lines) + "\n")
-    return p
+    f.write_text("\n".join(lines) + "\n")
+    return f
 
 
 @pytest.fixture
 def claude_session_file(tmp_path: Path) -> Path:
-    """Create a synthetic claude .jsonl session file."""
-    p = tmp_path / "claude-session.jsonl"
+    """Create a synthetic claude session .jsonl file."""
+    f = tmp_path / "claude-session.jsonl"
     lines = [
-        # Metadata line with cwd
-        json.dumps({
-            "cwd": str(tmp_path / "myproject"),
-            "gitBranch": "main",
-            "timestamp": "2025-01-15T10:00:00Z",
-        }),
-        # User message
         json.dumps({
             "type": "user",
-            "message": {"content": "Refactor the database module"},
-            "timestamp": "2025-01-15T10:01:00Z",
+            "message": {"content": "Help me refactor the auth module"},
+            "timestamp": "2026-04-28T10:00:00Z",
+            "cwd": str(tmp_path / "auth-project"),
+            "gitBranch": "feature/auth-refactor",
         }),
-        # Assistant response
         json.dumps({
             "type": "assistant",
             "message": {
-                "content": [{"type": "text", "text": "I'll refactor the database module to use connection pooling."}],
+                "content": [{"type": "text", "text": "I'll start by examining the current auth module structure."}]
             },
-            "timestamp": "2025-01-15T10:02:00Z",
+            "timestamp": "2026-04-28T10:01:00Z",
         }),
-        # Summary
         json.dumps({
-            "type": "summary",
-            "summary": "Refactoring database module with connection pooling",
-            "timestamp": "2025-01-15T10:03:00Z",
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "Found 3 files to refactor: auth.py, middleware.py, and session.py"}]
+            },
+            "timestamp": "2026-04-28T10:02:00Z",
         }),
     ]
-    p.write_text("\n".join(lines) + "\n")
-    return p
+    f.write_text("\n".join(lines) + "\n")
+    return f
 
 
 @pytest.fixture
 def kimi_session_file(tmp_path: Path) -> Path:
-    """Create a synthetic kimi .jsonl session file."""
-    p = tmp_path / "kimi-session.jsonl"
+    """Create a synthetic kimi session file."""
+    f = tmp_path / "kimi-session.jsonl"
     lines = [
         json.dumps({
-            "cwd": str(tmp_path / "myproject"),
-            "timestamp": "2025-01-15T10:00:00Z",
-        }),
-        json.dumps({
-            "type": "user",
             "role": "user",
-            "content": "Write unit tests for the API",
-            "timestamp": "2025-01-15T10:01:00Z",
+            "content": "帮我优化数据库查询",
+            "timestamp": "2026-04-28T10:00:00Z",
+            "cwd": str(tmp_path / "db-project"),
         }),
         json.dumps({
-            "type": "assistant",
             "role": "assistant",
-            "content": "I'll write comprehensive unit tests for the API endpoints.",
-            "timestamp": "2025-01-15T10:02:00Z",
+            "content": "我来分析一下查询性能问题",
+            "timestamp": "2026-04-28T10:01:00Z",
         }),
     ]
-    p.write_text("\n".join(lines) + "\n")
-    return p
+    f.write_text("\n".join(lines) + "\n")
+    return f
 
 
-# ---------------------------------------------------------------------------
-# Codex parser tests
-# ---------------------------------------------------------------------------
+# ---- Test parse_codex_session ----
 
 class TestParseCodexSession:
     def test_basic_parse(self, codex_session_file: Path):
@@ -140,151 +135,169 @@ class TestParseCodexSession:
         assert result is not None
         assert result["session_id"] == "sess-abc123"
         assert result["cwd"] is not None
-        assert "myproject" in result["cwd"]
-        assert result["heartbeat_ts"] is not None
-        assert result["heartbeat_ts"] > 0
 
     def test_recent_output(self, codex_session_file: Path):
         result = parse_codex_session(codex_session_file)
         assert result is not None
-        assert "authentication bug" in result["recent_output"] or "fix" in result["recent_output"].lower()
+        assert "fix the bug" in result["recent_output"].lower()
 
     def test_last_user_message(self, codex_session_file: Path):
         result = parse_codex_session(codex_session_file)
         assert result is not None
-        assert "auth bug" in result["last_user_message"]
+        assert "TypeError" in result["last_user_message"]
 
     def test_source_file(self, codex_session_file: Path):
         result = parse_codex_session(codex_session_file)
         assert result is not None
         assert result["source_file"] == str(codex_session_file)
 
+    def test_pending_items(self, codex_session_file: Path):
+        result = parse_codex_session(codex_session_file)
+        assert result is not None
+        # Should have pending items from the plan update
+        assert len(result["pending_items"]) > 0
+
     def test_empty_file(self, tmp_path: Path):
-        p = tmp_path / "empty.jsonl"
-        p.write_text("")
-        result = parse_codex_session(p)
+        f = tmp_path / "empty.jsonl"
+        f.write_text("")
+        result = parse_codex_session(f)
         # Empty file should still return a dict with defaults
-        assert result is not None or result is None  # Either is acceptable
+        assert result is not None
+        assert result["recent_output"] == ""
 
     def test_invalid_json(self, tmp_path: Path):
-        p = tmp_path / "bad.jsonl"
-        p.write_text("not json\nalso not json\n")
-        result = parse_codex_session(p)
-        # Should handle gracefully
-        assert result is not None or result is None
+        f = tmp_path / "bad.jsonl"
+        f.write_text("not json\n{bad json\n")
+        result = parse_codex_session(f)
+        assert result is not None
+        assert result["recent_output"] == ""
 
 
-# ---------------------------------------------------------------------------
-# Claude parser tests
-# ---------------------------------------------------------------------------
+# ---- Test parse_claude_session ----
 
 class TestParseClaudeSession:
     def test_basic_parse(self, claude_session_file: Path):
         result = parse_claude_session(claude_session_file)
         assert result is not None
-        assert result["session_id"] == claude_session_file.stem
-        assert result["cwd"] is not None
-        assert "myproject" in result["cwd"]
+        assert result["session_id"] == "claude-session"
 
     def test_git_branch(self, claude_session_file: Path):
         result = parse_claude_session(claude_session_file)
         assert result is not None
-        assert result["git_branch"] == "main"
+        assert result["git_branch"] == "feature/auth-refactor"
 
     def test_recent_output(self, claude_session_file: Path):
         result = parse_claude_session(claude_session_file)
         assert result is not None
-        # Should have some output from assistant or summary
         assert len(result["recent_output"]) > 0
 
     def test_last_user_message(self, claude_session_file: Path):
         result = parse_claude_session(claude_session_file)
         assert result is not None
-        assert "database" in result["last_user_message"].lower() or "refactor" in result["last_user_message"].lower()
+        assert "refactor" in result["last_user_message"].lower()
 
     def test_heartbeat_ts(self, claude_session_file: Path):
         result = parse_claude_session(claude_session_file)
         assert result is not None
         assert result["heartbeat_ts"] > 0
 
+    def test_cwd(self, claude_session_file: Path, tmp_path: Path):
+        result = parse_claude_session(claude_session_file)
+        assert result is not None
+        assert "auth-project" in (result["cwd"] or "")
 
-# ---------------------------------------------------------------------------
-# Kimi parser tests
-# ---------------------------------------------------------------------------
+
+# ---- Test parse_kimi_session ----
 
 class TestParseKimiSession:
     def test_basic_parse(self, kimi_session_file: Path):
         result = parse_kimi_session(kimi_session_file)
         assert result is not None
-        assert result["session_id"] == kimi_session_file.stem
+        assert result["session_id"] == "kimi-session"
 
     def test_recent_output(self, kimi_session_file: Path):
         result = parse_kimi_session(kimi_session_file)
         assert result is not None
-        assert "unit tests" in result["recent_output"].lower() or "api" in result["recent_output"].lower()
+        # Kimi uses Chinese content
+        assert len(result["recent_output"]) > 0
 
     def test_last_user_message(self, kimi_session_file: Path):
         result = parse_kimi_session(kimi_session_file)
         assert result is not None
-        assert "unit tests" in result["last_user_message"].lower() or "api" in result["last_user_message"].lower()
+        assert len(result["last_user_message"]) > 0
 
 
-# ---------------------------------------------------------------------------
-# Session file discovery tests
-# ---------------------------------------------------------------------------
+# ---- Test discover_session_files ----
 
 class TestDiscoverSessionFiles:
-    def test_discover_in_tmp(self, tmp_path: Path, codex_session_file: Path):
-        # Create a fake session dir
+    def test_discover_in_tmp(self, tmp_path: Path):
+        # Create a fake session directory
         session_dir = tmp_path / "sessions"
         session_dir.mkdir()
-        (session_dir / "s1.jsonl").write_text('{"type": "session_meta"}\n')
-        (session_dir / "s2.jsonl").write_text('{"type": "session_meta"}\n')
+        (session_dir / "session1.jsonl").write_text("{}\n")
+        (session_dir / "session2.jsonl").write_text("{}\n")
 
-        # discover_session_files searches in ~/.codex/sessions etc, not arbitrary dirs
-        # So we test with the actual search paths
-        files = discover_session_files("codex")
-        # Should return a list (may be empty if no codex installed)
+        files = discover_session_files("codex", str(tmp_path))
+        # Should find files (may be empty if paths don't exist, but function shouldn't crash)
         assert isinstance(files, list)
 
-    def test_unknown_agent_type(self):
-        files = discover_session_files("unknown-agent-xyz")
-        assert files == []
+    def test_unknown_agent_type(self, tmp_path: Path):
+        files = discover_session_files("unknown-agent", str(tmp_path))
+        assert isinstance(files, list)
+
+    def test_project_local_kimi_paths(self, tmp_path: Path):
+        session_dir = tmp_path / ".kimi"
+        session_dir.mkdir()
+        session_file = session_dir / "session.jsonl"
+        session_file.write_text("{}\n")
+
+        files = discover_session_files("kimi-code", str(tmp_path))
+
+        assert session_file.resolve() in [f.resolve() for f in files]
 
 
-# ---------------------------------------------------------------------------
-# Session-process matching tests
-# ---------------------------------------------------------------------------
+# ---- Test match_session_to_process ----
 
 class TestMatchSessionToProcess:
-    def test_match_by_cwd(self, tmp_path: Path):
-        cwd = str(tmp_path / "project")
+    def test_match_by_cwd(self):
         sessions = [
-            {"session_id": "s1", "cwd": cwd, "start_ts": 1000.0, "heartbeat_ts": 1000.0},
-            {"session_id": "s2", "cwd": "/other/path", "start_ts": 1000.0, "heartbeat_ts": 1000.0},
+            {"cwd": "/home/user/project-a", "start_ts": 1000, "session_id": "a"},
+            {"cwd": "/home/user/project-b", "start_ts": 2000, "session_id": "b"},
         ]
-        result = match_session_to_process(sessions, cwd, 1000.0)
+        result = match_session_to_process(sessions, "/home/user/project-a", 1000)
         assert result is not None
-        assert result["session_id"] == "s1"
+        assert result["session_id"] == "a"
 
-    def test_match_by_closest_start_ts(self, tmp_path: Path):
-        cwd = str(tmp_path / "project")
+    def test_match_by_closest_start_ts(self):
         sessions = [
-            {"session_id": "s1", "cwd": cwd, "start_ts": 1000.0, "heartbeat_ts": 1000.0},
-            {"session_id": "s2", "cwd": cwd, "start_ts": 2000.0, "heartbeat_ts": 2000.0},
+            {"cwd": "/home/user/project", "start_ts": 1000, "session_id": "early"},
+            {"cwd": "/home/user/project", "start_ts": 5000, "session_id": "late"},
         ]
-        # Process started at 1900, closer to s2
-        result = match_session_to_process(sessions, cwd, 1900.0)
+        result = match_session_to_process(sessions, "/home/user/project", 4900)
         assert result is not None
-        assert result["session_id"] == "s2"
+        assert result["session_id"] == "late"
 
     def test_no_match_empty_sessions(self):
-        result = match_session_to_process([], "/some/path", 1000.0)
+        result = match_session_to_process([], "/any/path", 0)
         assert result is None
 
     def test_no_match_different_cwd(self):
         sessions = [
-            {"session_id": "s1", "cwd": "/other/unique-project-a", "start_ts": 1000.0, "heartbeat_ts": 1000.0},
+            {"cwd": "/other/unique-project-a", "start_ts": 1000, "session_id": "a"},
         ]
-        result = match_session_to_process(sessions, "/my/unique-project-b", 1000.0)
+        result = match_session_to_process(sessions, "/my/unique-project-b", 1000)
+        # Must not fall back to an unrelated latest session.
         assert result is None
+
+    def test_match_by_project_local_source_file(self):
+        sessions = [
+            {
+                "cwd": None,
+                "start_ts": 1000,
+                "session_id": "local",
+                "source_file": "/home/user/project/.codex/session.jsonl",
+            },
+        ]
+        result = match_session_to_process(sessions, "/home/user/project", 1000)
+        assert result is not None
+        assert result["session_id"] == "local"

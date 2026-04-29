@@ -36,11 +36,6 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
     setTaskData(task)
   }, [task])
 
-  const handleStop = async () => {
-    if (!confirm('Stop this task?')) return
-    await api.stopTask(task.task_id)
-  }
-
   const currentStep = taskData.plan.find(s => s.id === taskData.current_step_id)
   const res = taskData.resources
   const history = taskData.cpu_mem_history || []
@@ -56,14 +51,6 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
         <StatusBadge status={taskData.status} />
         {taskData.has_error_hint && (
           <span className="text-red-400 text-sm">⚠ errors detected in log</span>
-        )}
-        {(['running', 'busy', 'testing', 'editing', 'searching', 'git_ops', 'running_script', 'waiting', 'idle', 'waiting_input'].includes(taskData.status)) && (
-          <button
-            onClick={handleStop}
-            className="ml-auto px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"
-          >
-            Stop
-          </button>
         )}
         <button
           onClick={async () => {

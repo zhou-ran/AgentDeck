@@ -1,9 +1,5 @@
 from __future__ import annotations
 
-import os
-import signal
-from datetime import datetime
-
 from fastapi import APIRouter, HTTPException, Query
 
 from backend.log_manager import get_log_tail, get_log_size, get_log_mtime
@@ -11,7 +7,6 @@ from backend.models import (
     NoteAdd,
     Task,
     TaskCreate,
-    TaskStatus,
     PlanImport,
     StepUpdate,
     TaskComplete,
@@ -22,7 +17,6 @@ from backend.security import (
     is_safe_log_path,
     is_safe_project_dir,
     sanitize_note,
-    verify_pid_for_task,
 )
 from backend.task_manager import (
     add_progress_note,
@@ -37,7 +31,6 @@ from backend.task_manager import (
     import_plan,
     list_tasks,
     load_task,
-    save_task,
     update_step,
     update_handoff_notes,
 )
@@ -83,40 +76,6 @@ async def api_delete_task(task_id: str):
         raise HTTPException(400, "Invalid task_id")
     if not delete_task(task_id):
         raise HTTPException(404, f"Task {task_id!r} not found")
-
-
-@router.post("/tasks/{task_id}/stop", response_model=Task)
-async def api_stop_task(task_id: str):
-    """Stop a running task. Verifies PID identity before sending signal."""
-    if not is_valid_task_id(task_id):
-        raise HTTPException(400, "Invalid task_id")
-
-    task = load_task(task_id)
-    if not task:
-        raise HTTPException(404, f"Task {task_id!r} not found")
-    if not task.pid:
-        raise HTTPException(400, "Task has no PID")
-
-    # Verify PID is still the same process we started
-    safe, reason = verify_pid_for_task(task.pid, task.command, task.project_dir)
-    if not safe:
-        raise HTTPException(
-            409,
-            f"PID verification failed: {reason}. "
-            "The process may have been replaced. Refusing to kill."
-        )
-
-    try:
-        os.kill(task.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        raise HTTPException(403, "Permission denied to stop process")
-
-    task.status = TaskStatus.completed
-    task.ended_at = datetime.now()
-    save_task(task)
-    return task
 
 
 @router.post("/tasks/{task_id}/plan", response_model=Task)

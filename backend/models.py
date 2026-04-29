@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 class TaskStatus(str, Enum):
     running = "running"
     busy = "busy"
+    needs_input = "needs_input"
     testing = "testing"
     editing = "editing"
     searching = "searching"
@@ -17,6 +18,8 @@ class TaskStatus(str, Enum):
     running_script = "running_script"
     waiting = "waiting"
     idle = "idle"
+    stale = "stale"
+    error_hint = "error_hint"
     waiting_input = "waiting_input"
     completed = "completed"
     failed = "failed"
@@ -43,6 +46,39 @@ class ProgressLogEntry(BaseModel):
     step_id: Optional[str] = None
 
 
+class ProjectNameInfo(BaseModel):
+    """Extracted project name and display info."""
+    name: str = ""
+    short_cwd: str = ""
+    git_root: Optional[str] = None
+    git_branch: Optional[str] = None
+
+
+class InstructionInfo(BaseModel):
+    """User instruction extracted from session or logs."""
+    text: str = ""
+    source: str = ""  # "session_file", "log_file", "process_name"
+    source_file: str = ""
+    confidence: float = 0.0
+
+
+class ProjectRuntimeStatus(BaseModel):
+    """Runtime status of a project directory."""
+    dirty_files: list[str] = Field(default_factory=list)
+    has_uncommitted: bool = False
+    has_untracked: bool = False
+    test_status: str = ""  # "passing", "failing", "unknown"
+    branch: str = ""
+    recent_files: list[str] = Field(default_factory=list)
+
+
+class ActivityTimelineItem(BaseModel):
+    """Single entry in the activity timeline."""
+    ts: float = 0.0
+    event: str = ""
+    detail: str = ""
+
+
 class Task(BaseModel):
     task_id: str
     name: str
@@ -53,13 +89,6 @@ class Task(BaseModel):
     started_at: datetime = Field(default_factory=datetime.now)
     ended_at: Optional[datetime] = None
     last_log_update: Optional[datetime] = None
-    status_reason: str = ""
-    current_activity: str = ""
-    agent_type: str = ""
-    project_name: str = ""
-    short_cwd: str = ""
-    user_instruction: Optional[str] = None
-    instruction_source: str = ""
 
     # Structured task fields
     goal: str = ""
@@ -72,6 +101,15 @@ class Task(BaseModel):
     changed_files: list[str] = Field(default_factory=list)
     risk_notes: str = ""
     final_summary: str = ""
+
+    # Enriched fields
+    status_reason: str = ""
+    current_activity: str = ""
+    agent_type: str = ""
+    project_name: str = ""
+    short_cwd: str = ""
+    user_instruction: str = ""
+    instruction_source: str = ""
 
     # Import tracking
     imported: bool = False
@@ -87,13 +125,13 @@ class ResourceMetrics(BaseModel):
     """Per-process resource usage snapshot."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
-    rss_mb: float = 0.0          # Resident Set Size in MB
-    vms_mb: float = 0.0          # Virtual Memory Size in MB
-    child_count: int = 0         # Number of child processes
-    open_files: int = 0          # Number of open file descriptors
-    read_bytes: float = 0.0      # Total bytes read (from /proc/pid/io)
-    write_bytes: float = 0.0     # Total bytes written
-    status: str = ""             # process status
+    rss_mb: float = 0.0
+    vms_mb: float = 0.0
+    child_count: int = 0
+    open_files: int = 0
+    read_bytes: float = 0.0
+    write_bytes: float = 0.0
+    status: str = ""
 
 
 class ProcessInfo(BaseModel):
@@ -112,46 +150,9 @@ class ProcessInfo(BaseModel):
     resources: Optional[ResourceMetrics] = None
 
 
-class ProjectNameInfo(BaseModel):
-    """Project name derived from cwd/git root."""
-    display_name: str = ""
-    base_project: str = ""
-    workspace: str = ""
-    project_dir: str = ""
-    short_cwd: str = ""
-
-
-class InstructionInfo(BaseModel):
-    """User instruction extracted from session files."""
-    text: Optional[str] = None
-    source_file: str = ""
-    source_type: str = ""
-    timestamp: Optional[datetime] = None
-    confidence: float = 0.0
-
-
-class ProjectRuntimeStatus(BaseModel):
-    """Git and runtime status for a project directory."""
-    git_branch: str = ""
-    git_dirty_files_count: int = 0
-    git_changed_files: list[str] = Field(default_factory=list)
-    recent_modified_files: list[str] = Field(default_factory=list)
-    test_processes: list[str] = Field(default_factory=list)
-    server_processes: list[str] = Field(default_factory=list)
-    error_hints: list[str] = Field(default_factory=list)
-    last_activity_time: Optional[datetime] = None
-
-
-class ActivityTimelineItem(BaseModel):
-    """A single activity event in the session timeline."""
-    timestamp: datetime = Field(default_factory=datetime.now)
-    label: str
-    source: str = ""
-
-
 class CpuMemSample(BaseModel):
     """Single CPU/MEM data point for history."""
-    ts: float          # timestamp (time.time())
+    ts: float
     cpu: float = 0.0
     mem: float = 0.0
 
@@ -162,8 +163,8 @@ class SystemMetrics(BaseModel):
     mem_total_gb: float = 0.0
     mem_used_gb: float = 0.0
     mem_percent: float = 0.0
-    disk_usages: list[dict[str, Any]] = Field(default_factory=list)  # [{path, total_gb, used_gb, percent}]
-    net_interfaces: list[dict[str, Any]] = Field(default_factory=list)  # [{name, rx_mbps, tx_mbps}]
+    disk_usages: list[dict[str, Any]] = Field(default_factory=list)
+    net_interfaces: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskCreate(BaseModel):
@@ -199,62 +200,47 @@ class TaskFail(BaseModel):
 
 
 class DiscoveredSession(BaseModel):
-    """A group of processes under the same cwd, discovered by auto-scan.
-
-    Enriched with session file parsing, project name, activity inference,
-    and git status.
-    """
-    session_id: str  # derived from cwd or PID
+    """A group of processes under the same cwd, discovered by auto-scan."""
+    session_id: str
     cwd: str
     root_process: ProcessInfo
     all_pids: list[int] = Field(default_factory=list)
-    agent_type: str = ""  # e.g. "codex", "claude", "kimi-code"
+    agent_type: str = ""
 
     # Enriched fields
-    root_pid: int = 0
-    root_cmd: str = ""
-    user: str = ""
-    project_name: str = ""
-    project: ProjectNameInfo = Field(default_factory=ProjectNameInfo)
-    short_cwd: str = ""
-    started_at: Optional[datetime] = None
-    elapsed: str = ""
-
-    # Status
-    status: TaskStatus = TaskStatus.unknown
+    project_name: ProjectNameInfo = Field(default_factory=ProjectNameInfo)
+    project: str = ""  # display name shortcut
+    status: str = "unknown"
     status_reason: str = ""
     current_activity: str = ""
-
-    # Session-derived fields
-    heartbeat_ts: Optional[float] = None
-    heartbeat_age_sec: Optional[float] = None
-    user_instruction: Optional[str] = None
+    user_instruction: str = ""
     instruction: InstructionInfo = Field(default_factory=InstructionInfo)
-    instruction_source: str = ""
-    instruction_candidates: list[InstructionInfo] = Field(default_factory=list)
-
-    # Process details
     child_processes: list[ProcessInfo] = Field(default_factory=list)
     active_commands: list[str] = Field(default_factory=list)
-    cpu_percent: float = 0.0
-    memory_percent: float = 0.0
 
-    # Log and project status
-    log_candidates: list[str] = Field(default_factory=list)
-    recent_logs: list[str] = Field(default_factory=list)
-    project_status: ProjectRuntimeStatus = Field(default_factory=ProjectRuntimeStatus)
-    git_status: dict[str, Any] = Field(default_factory=dict)
-    recent_changed_files: list[str] = Field(default_factory=list)
-    error_hints: list[str] = Field(default_factory=list)
+    # Heartbeat
+    heartbeat_ts: Optional[float] = None
+    heartbeat_age_sec: Optional[float] = None
+
+    # Session file data
     recent_output: str = ""
     pending_items: list[str] = Field(default_factory=list)
     last_user_message: str = ""
-
-    # Metadata
+    source_file: str = ""
     confidence: float = 0.0
+
+    # Resource metrics
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+
+    # Project status
+    project_status: ProjectRuntimeStatus = Field(default_factory=ProjectRuntimeStatus)
+    git_status: str = ""
+    error_hints: list[str] = Field(default_factory=list)
+    recent_files: list[str] = Field(default_factory=list)
+
+    # Timeline
     timeline: list[ActivityTimelineItem] = Field(default_factory=list)
 
-
-class ImportPidRequest(BaseModel):
-    pid: int
-    name: str
+    # Log info
+    recent_logs: list[str] = Field(default_factory=list)
