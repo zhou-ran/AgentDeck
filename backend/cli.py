@@ -562,7 +562,7 @@ def tail(task_id: str, lines: int, follow: bool):
 
 @cli.command()
 @click.option("--host", default=None, help="Bind host (default: 127.0.0.1)")
-@click.option("--port", default=None, type=int, help="Bind port (default: 8790)")
+@click.option("--port", default=None, type=int, help="Bind port (default: 9797)")
 def serve(host: str | None, port: int | None):
     """Start the web dashboard server."""
     from backend.main import run_server
@@ -592,7 +592,7 @@ def show_config():
 
 @cli.command(name="install-service")
 @click.option("--host", default="127.0.0.1", help="Bind host")
-@click.option("--port", default=8787, type=int, help="Bind port")
+@click.option("--port", default=9797, type=int, help="Bind port")
 @click.option("--enable", is_flag=True, help="Enable service to start on login")
 def install_service_cmd(host: str, port: int, enable: bool):
     """Install systemd user service for auto-start.

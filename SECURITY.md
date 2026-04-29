@@ -122,7 +122,7 @@ token: your-secret-token
 agent-foreman-local serve
 
 # LAN access (requires token)
-agent-foreman-local serve --host 0.0.0.0 --port 8790
+agent-foreman-local serve --host 0.0.0.0 --port 9797
 # Token will be printed to stdout
 ```
 

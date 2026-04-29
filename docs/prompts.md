@@ -14,7 +14,7 @@
 
 目标：
 实现一个局域网可访问的网页，例如：
-http://<server-ip>:8787
+http://<server-ip>:9797
 
 核心功能：
 1. 自动发现正在运行的 agent 进程
@@ -394,7 +394,7 @@ MVP 范围：
    - make install
    - 或 pipx install .
 2. 一键启动：
-   - agent-foreman-local serve --host 127.0.0.1 --port 8787
+   - agent-foreman-local serve --host 127.0.0.1 --port 9797
 3. 开发模式：
    - make dev
 4. 生产模式：
@@ -428,7 +428,7 @@ MVP 范围：
 
 最终验收：
 - 我能在服务器上启动网页
-- 手机或另一台电脑在同一局域网输入 server-ip:8787 可以查看
+- 手机或另一台电脑在同一局域网输入 server-ip:9797 可以查看
 - 能看到多个 agent 的状态、日志、进程树和任务流程
 - 不需要切换 terminal
 - 不需要 sudo
@@ -461,7 +461,7 @@ MVP 范围：
 - agentctl tail <task_id>
 - agentctl stop <task_id>
 - agentctl import-pid <pid> --name <name>
-- agent-foreman-local serve --host 127.0.0.1 --port 8787
+- agent-foreman-local serve --host 127.0.0.1 --port 9797
 
 网页功能：
 - 任务列表

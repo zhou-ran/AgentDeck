@@ -27,7 +27,7 @@ make build-frontend             # Build frontend to backend/static/
 make clean                      # Clean build artifacts
 
 # CLI (agent-foreman-local, alias: agentctl)
-agent-foreman-local serve [--host 127.0.0.1] [--port 8787]
+agent-foreman-local serve [--host 127.0.0.1] [--port 9797]
 agent-foreman-local start <name> --dir <dir> -- <command...>
 agent-foreman-local init <name> --dir <dir> --goal "..."
 agent-foreman-local set-plan <task_id> plan.json
@@ -48,7 +48,7 @@ agent-foreman-local uninstall-service
 
 # Frontend development
 cd frontend
-npm run dev          # Vite dev server with proxy to :8787
+npm run dev          # Vite dev server with proxy to :9797
 npm run build        # Build to backend/static/
 ```
 
@@ -97,11 +97,19 @@ tests/
 ├── test_process_scanner.py # PID validation, elapsed formatting
 ├── test_log_tail.py      # Log reading, tail, size, mtime
 ├── test_state_machine.py # Status inference, error detection
-└── test_security.py      # Path safety, task_id regex, rate limiter
+├── test_security.py      # Path safety, task_id regex, rate limiter
+├── test_api_auth.py      # Token auth endpoint tests
+├── test_api_tasks.py     # Task API endpoint tests
+└── test_config.py        # Config loading tests
 
 scripts/
 ├── demo_long_task.sh     # Long-running task demo
 └── demo_fail_task.sh     # Failing task demo
+
+docs/
+├── prompts.md            # Original design prompts
+├── XM.md                 # Project review report
+└── kimi.md               # Code review report
 ```
 
 ## Key Patterns

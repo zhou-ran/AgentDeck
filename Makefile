@@ -14,16 +14,16 @@ build-frontend:
 # --- Dev mode (backend + frontend concurrently) ---
 dev:
 	@echo "Starting dev mode..."
-	@echo "  Backend:  http://localhost:8787"
+	@echo "  Backend:  http://localhost:9797"
 	@echo "  Frontend: http://localhost:5173"
 	@trap 'kill 0' EXIT; \
-	  uvicorn backend.main:app --reload --host 127.0.0.1 --port 8787 & \
+	  uvicorn backend.main:app --reload --host 127.0.0.1 --port 9797 & \
 	  cd frontend && npm run dev & \
 	  wait
 
 # --- Production mode ---
 prod: build-frontend
-	agent-foreman-local serve --host 127.0.0.1 --port 8787
+	agent-foreman-local serve --host 127.0.0.1 --port 9797
 
 # --- Tests ---
 test:
