@@ -7,11 +7,11 @@
 ## 1. 本次变更摘要
 
 - **项目名称**：AgentStatus → AgentDeck
-- **CLI 命令**：`agent-foreman-local` / `agentctl` → `agentdeck`
+- **CLI 命令**：`agent-foreman-local` → `agentdeck`；`agentctl` 保留为兼容别名
 - **配置目录**：`~/.agent_foreman_local` → `~/.agentdeck`
 - **PyPI/包名**：`agentstatus` → `agentdeck`
 - **前端包名**：`agentstatus-frontend` → `agentdeck-frontend`
-- **docs/ 目录**：已从当前 git 跟踪中移除，并加入 `.gitignore`
+- **本地文档**：`docs/` 与 `CLAUDE.md` 已从当前 git 跟踪中排除，并加入 `.gitignore`
 
 ---
 
@@ -29,19 +29,19 @@
 - **git 提交历史中的作者信息** 包含邮箱（`ranzhou1005@gmail.com`）。
 
 ### 2.3 已采取的脱敏措施
-- `docs/` 已从当前 git 索引中移除（`git rm --cached -r docs/`）。
-- `docs/` 已加入 `.gitignore`，未来不会被意外提交。
+- `docs/` 与 `CLAUDE.md` 已从当前 git 索引中移除（`git rm --cached -r docs/ CLAUDE.md`）。
+- `docs/` 与 `CLAUDE.md` 已加入 `.gitignore`，未来不会被意外提交。
 - 旧 build 产物已清理，前端已重新构建并更新到 `backend/static/`。
 
 ---
 
 ## 3. 剩余风险与可选清理
 
-### 风险：git 历史中仍保留 docs/ 内容
-虽然 `docs/` 已从**当前工作树**的跟踪中移除，但由于 Git 的历史回溯机制，`docs/` 目录及其内容仍然存在于**历史提交记录**中。推送到公共仓库后，任何人仍可通过 `git log --all --full-history -- docs/` 查看这些文件的历史版本。
+### 风险：git 历史中仍保留本地文档内容
+虽然 `docs/` 与 `CLAUDE.md` 已从**当前工作树**的跟踪中移除，但由于 Git 的历史回溯机制，这些文件仍然存在于**历史提交记录**中。推送到公共仓库后，任何人仍可通过 `git log --all --full-history -- docs/ CLAUDE.md` 查看历史版本。
 
 ### 可选方案 A：接受当前状态（推荐，如果 docs 内容不涉密）
-如果 docs 中的本地路径和项目设计文档不属于高度敏感信息，可直接 push。`.gitignore` 已确保未来不再跟踪 docs。
+如果本地路径和项目设计文档不属于高度敏感信息，可直接 push。`.gitignore` 已确保未来不再跟踪 `docs/` 与 `CLAUDE.md`。
 
 ### 可选方案 B：彻底清除历史中的 docs（如果要求严格脱敏）
 若需从**整个 git 历史**中抹除 docs 目录，需重写历史。操作前请确保已备份仓库。
@@ -50,7 +50,7 @@
 # 方法：使用 git-filter-repo（需先安装）
 # pip install git-filter-repo
 # 然后执行：
-git filter-repo --path docs/ --invert-paths
+git filter-repo --path docs/ --path CLAUDE.md --invert-paths
 
 # 或使用 BFG Repo-Cleaner：
 # java -jar bfg.jar --delete-folders docs
@@ -67,9 +67,9 @@ git filter-repo --path docs/ --invert-paths
 在运行 `git push` 之前，请逐项勾选确认：
 
 - [ ] 我已阅读本指南并理解剩余风险。
-- [ ] 我确认 docs/ 中的内容可以保留在 git 历史中，或我已执行历史重写。
+- [ ] 我确认 `docs/` 与 `CLAUDE.md` 的历史内容可以保留在 git 历史中，或我已执行历史重写。
 - [ ] 我确认代码中无硬编码的密码、API Key、Token 等凭证。
-- [ ] 我已检查 `.gitignore` 确保不需要的文件（`docs/`、`tmp/`、`node_modules/`、`__pycache__/` 等）未被跟踪。
+- [ ] 我已检查 `.gitignore` 确保不需要的文件（`docs/`、`CLAUDE.md`、`tmp/`、`node_modules/`、`__pycache__/` 等）未被跟踪。
 - [ ] 我确认远程仓库地址正确：`git@github.com:zhou-ran/AgentDeck.git`
 - [ ] 我拥有该 GitHub 仓库的 SSH 写入权限。
 

@@ -62,7 +62,7 @@ AgentDeck runs on a shared Linux server where multiple users may have login acce
 
 ### 5. PID Spoofing / Kill (MEDIUM)
 - **Before**: `os.kill(pid)` without verification
-- **After**: `verify_pid_for_task()` checks process command and CWD match before sending signal. Both API and CLI enforce this.
+- **After**: `verify_pid_for_task()` checks process command and CWD match before sending signal. CLI process actions enforce this; the web API does not expose a stop/kill endpoint.
 
 ### 6. Environment Variable Leakage (MEDIUM)
 - **Before**: Not explicitly addressed

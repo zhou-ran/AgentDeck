@@ -46,6 +46,10 @@ agentdeck start my-training \
 agentdeck tail my-training -f
 ```
 
+### Watch Live Agent Sessions
+
+AgentDeck also auto-discovers interactive and background agent sessions that were not started by `agentdeck start`. The web UI groups them by current status, foreground/background work, git state, recent logs, and project directory. Use pin/ignore actions to keep important sessions visible and hide noisy long-running processes.
+
 ## CLI Reference
 
 | Command | Description |
@@ -56,6 +60,7 @@ agentdeck tail my-training -f
 | `agentdeck list [--all]` | List tasks |
 | `agentdeck status <task_id>` | Show detailed task status |
 | `agentdeck tail <task_id> [-f] [-n 100]` | Tail log output |
+| `agentdeck discover` | Print auto-discovered live agent sessions |
 | `agentdeck note <task_id> "message"` | Add a progress note |
 | `agentdeck step <task_id> <step_id> --status done` | Update a plan step |
 | `agentdeck set-plan <task_id> plan.json` | Import a plan |
@@ -118,21 +123,41 @@ agentdeck uninstall-service
 ## Development
 
 ```bash
-make dev       # Backend (--reload) + Frontend (vite dev) concurrently
+make dev       # Backend on :9797 + Frontend on :5173 concurrently
 make test      # Run pytest
 make build-frontend  # Build frontend
 make clean     # Clean build artifacts
 ```
 
-## Task States
+## Status Model
+
+Managed tasks started by `agentdeck start` use persisted task states:
 
 | State | Color | Meaning |
 |-------|-------|---------|
 | `running` | Green | Process active, CPU or log activity |
-| `idle` | Yellow | Process alive, CPU < 0.5%, log stale 5 min |
-| `waiting_input` | Orange | Process waiting for user input |
+| `busy` / `editing` / `searching` / `testing` / `git_ops` / `running_script` | Green/Blue | Current inferred activity |
+| `needs_input` / `waiting_input` | Orange | Agent likely needs user input |
+| `waiting` / `idle` / `stale` | Yellow/Gray | Process alive but quiet or old |
+| `error_hint` | Red | Log or session output contains an error signal |
 | `completed` | Blue | Process exited cleanly |
 | `failed` | Red | Process exited with error or error in log |
+| `unknown` | Gray | Status cannot be inferred |
+
+Auto-discovered live sessions use the same activity vocabulary plus session-specific fields such as foreground agent status, background jobs, heartbeat age, git details, pin state, and ignore state.
+
+## API Reference
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/api/tasks` | Managed task CRUD, plans, steps, notes, handoff, logs, process tree |
+| `/api/discover` | Auto-scan live agent sessions |
+| `/api/events` | SSE stream, refreshed every 2 seconds |
+| `/api/pins` | List/create/delete pin rules |
+| `/api/ignored` | List/create/delete/restore ignore rules |
+| `/api/sessions/{session_id}/pin` | Pin a discovered session |
+| `/api/sessions/{session_id}/ignore` | Ignore a discovered session |
+| `/api/system-metrics` | System CPU, memory, disk, and network overview |
 
 ## File Locations
 
@@ -140,6 +165,8 @@ make clean     # Clean build artifacts
 |------|------|
 | Config | `~/.agentdeck/config.yaml` |
 | Task state | `~/.agentdeck/tasks/{task_id}.json` |
+| Pin rules | `~/.agentdeck/pins.json` |
+| Ignore rules | `~/.agentdeck/ignored.json` |
 | Logs | `~/agent_logs/{task_id}.log` |
 | systemd service | `~/.config/systemd/user/agentdeck.service` |
 
@@ -149,7 +176,8 @@ make clean     # Clean build artifacts
 - Token auth for LAN access
 - Path traversal prevention
 - Process env never read
-- No browser command execution, PID import, stop, or kill endpoint
+- No browser command execution endpoint
+- No stop/kill API endpoint; CLI process actions verify task/PID identity first
 - Rate limiting (120 req/min)
 - Atomic file writes
 

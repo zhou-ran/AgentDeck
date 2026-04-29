@@ -48,8 +48,10 @@ logs/
 Thumbs.db
 
 # Project specific
-~/.agent_foreman_local/
+.agent_foreman_local/
+.agentdeck/
 .codex
+CLAUDE.md
 tmp/
 
 # Project docs (not for git)

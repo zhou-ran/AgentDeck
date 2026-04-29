@@ -23,7 +23,7 @@ dev:
 
 # --- Production mode ---
 prod: build-frontend
-	agent-foreman-local serve --host 127.0.0.1 --port 9797
+	agentdeck serve --host 127.0.0.1 --port 8787
 
 # --- Tests ---
 test:

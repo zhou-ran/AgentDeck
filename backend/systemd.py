@@ -38,7 +38,7 @@ def get_service_path() -> Path:
 
 def generate_service(
     host: str = "127.0.0.1",
-    port: int = 9797,
+    port: int = 8787,
 ) -> str:
     """Generate the systemd service file content."""
     exec_path = _find_executable()
@@ -56,7 +56,7 @@ def generate_service(
 
 def install_service(
     host: str = "127.0.0.1",
-    port: int = 9797,
+    port: int = 8787,
     enable: bool = False,
 ) -> tuple[bool, str]:
     """Install the systemd user service.
