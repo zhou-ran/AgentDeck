@@ -173,7 +173,7 @@ export function SessionDetailPanel({
         <ProcessTree tree={session.root_process} />
       </section>
 
-      <div className="sticky bottom-0 -mx-5 mt-5 flex gap-2 border-t border-[var(--border)] bg-[var(--surface-strong)] px-5 py-4 backdrop-blur-xl">
+      <div className="-mx-5 mt-5 flex gap-2 border-t border-[var(--border)] bg-[var(--surface-strong)] px-5 py-4">
         <button
           type="button"
           onClick={() => onAction(session, 'pin')}
