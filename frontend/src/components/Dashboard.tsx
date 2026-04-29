@@ -118,10 +118,9 @@ export function Dashboard({ tasks, discovered, systemMetrics, scanMeta, connecte
 
   useEffect(() => {
     setAllSessions(prev => {
-      const merged = new Map<string, DiscoveredSession>()
-      for (const item of prev) merged.set(item.session_id, item)
-      for (const item of discovered) merged.set(item.session_id, item)
-      return Array.from(merged.values())
+      const liveIds = new Set(discovered.map(item => item.session_id))
+      const retainedIgnored = prev.filter(item => item.is_ignored && !liveIds.has(item.session_id))
+      return [...retainedIgnored, ...discovered]
     })
   }, [discovered])
 

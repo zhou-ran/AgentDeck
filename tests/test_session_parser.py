@@ -146,6 +146,41 @@ class TestParseCodexSession:
         assert result is not None
         assert "TypeError" in result["last_user_message"]
 
+    def test_last_user_message_survives_long_tail(self, tmp_path: Path):
+        f = tmp_path / "long-codex.jsonl"
+        lines = [
+            json.dumps({
+                "type": "session_meta",
+                "payload": {
+                    "id": "sess-long",
+                    "cwd": str(tmp_path),
+                    "timestamp": "2026-04-28T10:00:00Z",
+                },
+                "timestamp": "2026-04-28T10:00:00Z",
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "Original task stays attached"},
+                "timestamp": "2026-04-28T10:01:00Z",
+            }),
+        ]
+        for i in range(100):
+            lines.append(json.dumps({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": f"assistant update {i}"}],
+                },
+                "timestamp": "2026-04-28T10:02:00Z",
+            }))
+        f.write_text("\n".join(lines) + "\n")
+
+        result = parse_codex_session(f)
+
+        assert result is not None
+        assert result["last_user_message"] == "Original task stays attached"
+
     def test_source_file(self, codex_session_file: Path):
         result = parse_codex_session(codex_session_file)
         assert result is not None
@@ -163,6 +198,37 @@ class TestParseCodexSession:
         roles = [item["role"] for item in result["conversation"]]
         assert "assistant" in roles
         assert "user" in roles
+
+    def test_tool_output_does_not_pollute_conversation(self, tmp_path: Path):
+        f = tmp_path / "codex-tool-output.jsonl"
+        lines = [
+            json.dumps({
+                "type": "session_meta",
+                "payload": {"id": "sess-tool", "cwd": str(tmp_path), "timestamp": "2026-04-28T10:00:00Z"},
+                "timestamp": "2026-04-28T10:00:00Z",
+            }),
+            json.dumps({
+                "type": "event_msg",
+                "payload": {"type": "user_message", "message": "Current session task"},
+                "timestamp": "2026-04-28T10:01:00Z",
+            }),
+            json.dumps({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": '{"type":"user_message","message":"Other session task"}',
+                },
+                "timestamp": "2026-04-28T10:02:00Z",
+            }),
+        ]
+        f.write_text("\n".join(lines) + "\n")
+
+        result = parse_codex_session(f)
+
+        assert result is not None
+        texts = [item["text"] for item in result["conversation"]]
+        assert "Current session task" in texts
+        assert all("Other session task" not in text for text in texts)
 
     def test_empty_file(self, tmp_path: Path):
         f = tmp_path / "empty.jsonl"
@@ -273,6 +339,21 @@ class TestDiscoverSessionFiles:
 
         assert session_file.resolve() in [f.resolve() for f in files]
 
+    def test_subagent_session_files_are_excluded(self, tmp_path: Path):
+        session_dir = tmp_path / ".claude"
+        root_session = session_dir / "session.jsonl"
+        subagent_session = session_dir / "subagents" / "agent-abc.jsonl"
+        subagent_session.parent.mkdir(parents=True)
+        session_dir.mkdir(exist_ok=True)
+        root_session.write_text("{}\n")
+        subagent_session.write_text("{}\n")
+
+        files = discover_session_files("claude-code", str(tmp_path))
+        resolved = [f.resolve() for f in files]
+
+        assert root_session.resolve() in resolved
+        assert subagent_session.resolve() not in resolved
+
 
 # ---- Test match_session_to_process ----
 
@@ -288,12 +369,42 @@ class TestMatchSessionToProcess:
 
     def test_match_by_closest_start_ts(self):
         sessions = [
-            {"cwd": "/home/user/project", "start_ts": 1000, "session_id": "early"},
-            {"cwd": "/home/user/project", "start_ts": 5000, "session_id": "late"},
+            {"cwd": "/home/user/project", "start_ts": 1000, "heartbeat_ts": 1100, "session_id": "early"},
+            {"cwd": "/home/user/project", "start_ts": 5000, "heartbeat_ts": 5100, "session_id": "late"},
         ]
         result = match_session_to_process(sessions, "/home/user/project", 4900)
         assert result is not None
         assert result["session_id"] == "late"
+
+    def test_stale_process_start_uses_latest_heartbeat(self):
+        sessions = [
+            {"cwd": "/home/user/project", "start_ts": 10_000, "heartbeat_ts": 10_100, "session_id": "old"},
+            {"cwd": "/home/user/project", "start_ts": 50_000, "heartbeat_ts": 50_100, "session_id": "current"},
+        ]
+        result = match_session_to_process(sessions, "/home/user/project", 1_000)
+        assert result is not None
+        assert result["session_id"] == "current"
+
+    def test_embedded_cwd_beats_project_local_source_fallback(self):
+        sessions = [
+            {
+                "cwd": None,
+                "start_ts": 2000,
+                "heartbeat_ts": 9000,
+                "session_id": "local-fragment",
+                "source_file": "/home/user/project/.codex/session.jsonl",
+            },
+            {
+                "cwd": "/home/user/project",
+                "start_ts": 1000,
+                "heartbeat_ts": 1000,
+                "session_id": "direct",
+                "source_file": "/home/user/.codex/sessions/direct.jsonl",
+            },
+        ]
+        result = match_session_to_process(sessions, "/home/user/project")
+        assert result is not None
+        assert result["session_id"] == "direct"
 
     def test_no_match_empty_sessions(self):
         result = match_session_to_process([], "/any/path", 0)
