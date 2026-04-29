@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from backend.models import DiscoveredSession
 from backend.task_manager import get_task_log_metadata, list_tasks
 from backend.process_scanner import (
-    discover_sessions,
+    scan_agent_sessions,
     get_resource_metrics,
     get_history,
     record_sample,
@@ -30,7 +30,7 @@ def _get_discovered_sessions_cached() -> list[DiscoveredSession]:
 
     now = time.time()
     if now - _discovery_cache_ts >= _DISCOVERY_TTL_SECONDS:
-        _discovery_cache = discover_sessions()
+        _discovery_cache = scan_agent_sessions()
         _discovery_cache_ts = now
     return _discovery_cache
 

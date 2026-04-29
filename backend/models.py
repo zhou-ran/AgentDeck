@@ -9,6 +9,13 @@ from pydantic import BaseModel, Field
 
 class TaskStatus(str, Enum):
     running = "running"
+    busy = "busy"
+    testing = "testing"
+    editing = "editing"
+    searching = "searching"
+    git_ops = "git_ops"
+    running_script = "running_script"
+    waiting = "waiting"
     idle = "idle"
     waiting_input = "waiting_input"
     completed = "completed"
@@ -36,6 +43,38 @@ class ProgressLogEntry(BaseModel):
     step_id: Optional[str] = None
 
 
+class ProjectNameInfo(BaseModel):
+    """Extracted project name and display info."""
+    name: str = ""
+    short_cwd: str = ""
+    git_root: Optional[str] = None
+    git_branch: Optional[str] = None
+
+
+class InstructionInfo(BaseModel):
+    """User instruction extracted from session or logs."""
+    text: str = ""
+    source: str = ""  # "session_file", "log_file", "process_name"
+    source_file: str = ""
+    confidence: float = 0.0
+
+
+class ProjectRuntimeStatus(BaseModel):
+    """Runtime status of a project directory."""
+    dirty_files: list[str] = Field(default_factory=list)
+    has_uncommitted: bool = False
+    has_untracked: bool = False
+    test_status: str = ""  # "passing", "failing", "unknown"
+    last_commit_msg: str = ""
+
+
+class ActivityTimelineItem(BaseModel):
+    """Single entry in the activity timeline."""
+    ts: float = 0.0
+    event: str = ""
+    detail: str = ""
+
+
 class Task(BaseModel):
     task_id: str
     name: str
@@ -59,6 +98,15 @@ class Task(BaseModel):
     risk_notes: str = ""
     final_summary: str = ""
 
+    # Enriched fields
+    status_reason: str = ""
+    current_activity: str = ""
+    agent_type: str = ""
+    project_name: str = ""
+    short_cwd: str = ""
+    user_instruction: str = ""
+    instruction_source: str = ""
+
     # Import tracking
     imported: bool = False
     imported_from_pid: Optional[int] = None
@@ -73,13 +121,13 @@ class ResourceMetrics(BaseModel):
     """Per-process resource usage snapshot."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
-    rss_mb: float = 0.0          # Resident Set Size in MB
-    vms_mb: float = 0.0          # Virtual Memory Size in MB
-    child_count: int = 0         # Number of child processes
-    open_files: int = 0          # Number of open file descriptors
-    read_bytes: float = 0.0      # Total bytes read (from /proc/pid/io)
-    write_bytes: float = 0.0     # Total bytes written
-    status: str = ""             # process status
+    rss_mb: float = 0.0
+    vms_mb: float = 0.0
+    child_count: int = 0
+    open_files: int = 0
+    read_bytes: float = 0.0
+    write_bytes: float = 0.0
+    status: str = ""
 
 
 class ProcessInfo(BaseModel):
@@ -100,7 +148,7 @@ class ProcessInfo(BaseModel):
 
 class CpuMemSample(BaseModel):
     """Single CPU/MEM data point for history."""
-    ts: float          # timestamp (time.time())
+    ts: float
     cpu: float = 0.0
     mem: float = 0.0
 
@@ -111,8 +159,8 @@ class SystemMetrics(BaseModel):
     mem_total_gb: float = 0.0
     mem_used_gb: float = 0.0
     mem_percent: float = 0.0
-    disk_usages: list[dict[str, Any]] = Field(default_factory=list)  # [{path, total_gb, used_gb, percent}]
-    net_interfaces: list[dict[str, Any]] = Field(default_factory=list)  # [{name, rx_mbps, tx_mbps}]
+    disk_usages: list[dict[str, Any]] = Field(default_factory=list)
+    net_interfaces: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskCreate(BaseModel):
@@ -149,11 +197,46 @@ class TaskFail(BaseModel):
 
 class DiscoveredSession(BaseModel):
     """A group of processes under the same cwd, discovered by auto-scan."""
-    session_id: str  # derived from cwd or PID
+    session_id: str
     cwd: str
     root_process: ProcessInfo
     all_pids: list[int] = Field(default_factory=list)
-    agent_type: str = ""  # e.g. "codex", "claude", "python"
+    agent_type: str = ""
+
+    # Enriched fields
+    project_name: ProjectNameInfo = Field(default_factory=ProjectNameInfo)
+    project: str = ""  # display name shortcut
+    status: str = "unknown"
+    status_reason: str = ""
+    current_activity: str = ""
+    user_instruction: str = ""
+    instruction: InstructionInfo = Field(default_factory=InstructionInfo)
+    child_processes: list[ProcessInfo] = Field(default_factory=list)
+    active_commands: list[str] = Field(default_factory=list)
+
+    # Heartbeat
+    heartbeat_ts: Optional[float] = None
+    heartbeat_age_sec: Optional[float] = None
+
+    # Session file data
+    recent_output: str = ""
+    pending_items: list[str] = Field(default_factory=list)
+    last_user_message: str = ""
+
+    # Resource metrics
+    cpu_percent: float = 0.0
+    memory_percent: float = 0.0
+
+    # Project status
+    project_status: ProjectRuntimeStatus = Field(default_factory=ProjectRuntimeStatus)
+    git_status: str = ""
+    error_hints: list[str] = Field(default_factory=list)
+
+    # Timeline
+    timeline: list[ActivityTimelineItem] = Field(default_factory=list)
+
+    # Log info
+    recent_logs: list[str] = Field(default_factory=list)
 
 
 class ImportPidRequest(BaseModel):

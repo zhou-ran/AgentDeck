@@ -1,4 +1,17 @@
-export type TaskStatus = 'running' | 'idle' | 'waiting_input' | 'completed' | 'failed' | 'unknown'
+export type TaskStatus =
+  | 'running'
+  | 'busy'
+  | 'testing'
+  | 'editing'
+  | 'searching'
+  | 'git_ops'
+  | 'running_script'
+  | 'waiting'
+  | 'idle'
+  | 'waiting_input'
+  | 'completed'
+  | 'failed'
+  | 'unknown'
 
 export interface PlanStep {
   id: string
@@ -31,6 +44,34 @@ export interface CpuMemSample {
   mem: number
 }
 
+export interface ProjectNameInfo {
+  name: string
+  short_cwd: string
+  git_root: string | null
+  git_branch: string | null
+}
+
+export interface InstructionInfo {
+  text: string
+  source: string
+  source_file: string
+  confidence: number
+}
+
+export interface ProjectRuntimeStatus {
+  dirty_files: string[]
+  has_uncommitted: boolean
+  has_untracked: boolean
+  test_status: string
+  last_commit_msg: string
+}
+
+export interface ActivityTimelineItem {
+  ts: number
+  event: string
+  detail: string
+}
+
 export interface Task {
   task_id: string
   name: string
@@ -53,6 +94,15 @@ export interface Task {
   changed_files: string[]
   risk_notes: string
   final_summary: string
+
+  // Enriched fields
+  status_reason: string
+  current_activity: string
+  agent_type: string
+  project_name: string
+  short_cwd: string
+  user_instruction: string
+  instruction_source: string
 
   // Legacy
   exit_code: number | null
@@ -87,6 +137,41 @@ export interface DiscoveredSession {
   root_process: ProcessInfo
   all_pids: number[]
   agent_type: string
+
+  // Enriched fields
+  project_name: ProjectNameInfo
+  project: string
+  status: string
+  status_reason: string
+  current_activity: string
+  user_instruction: string
+  instruction: InstructionInfo
+  child_processes: ProcessInfo[]
+  active_commands: string[]
+
+  // Heartbeat
+  heartbeat_ts: number | null
+  heartbeat_age_sec: number | null
+
+  // Session file data
+  recent_output: string
+  pending_items: string[]
+  last_user_message: string
+
+  // Resource metrics
+  cpu_percent: number
+  memory_percent: number
+
+  // Project status
+  project_status: ProjectRuntimeStatus
+  git_status: string
+  error_hints: string[]
+
+  // Timeline
+  timeline: ActivityTimelineItem[]
+
+  // Logs
+  recent_logs: string[]
 }
 
 export interface LogResponse {
