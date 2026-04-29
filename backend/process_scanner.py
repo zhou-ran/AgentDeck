@@ -7,10 +7,16 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Optional
 
 import psutil
 
+from backend.git_utils import (
+    get_changed_files,
+    get_git_branch,
+    get_git_root,
+    get_git_status_short,
+)
+from backend.log_manager import redact_sensitive_text
 from backend.models import (
     ActivityTimelineItem,
     AgentDetectionResult,
@@ -21,21 +27,14 @@ from backend.models import (
     ForegroundAgentInfo,
     GitStatus,
     InstructionInfo,
+    ProcessInfo,
     ProjectNameInfo,
     ProjectRuntimeStatus,
-    ProcessInfo,
     ResourceMetrics,
     ResourceUsage,
     SystemMetrics,
 )
-from backend.log_manager import redact_sensitive_text
 from backend.rules import matching_rules
-from backend.git_utils import (
-    get_changed_files,
-    get_git_branch,
-    get_git_root,
-    get_git_status_short,
-)
 
 # ---- Root agent patterns for detecting top-level agents ----
 ROOT_AGENT_PATTERNS = [
@@ -142,7 +141,7 @@ def _format_elapsed(start_time: float) -> str:
     return f"{hours}h{m}m"
 
 
-def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> Optional[ProcessInfo]:
+def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> ProcessInfo | None:
     """Convert psutil Process to ProcessInfo.
 
     SECURITY: We only read specific attrs via as_dict(). We NEVER read
@@ -199,7 +198,7 @@ def _proc_to_info(proc: psutil.Process, include_children: bool = True) -> Option
     )
 
 
-def get_process_tree(pid: int) -> Optional[ProcessInfo]:
+def get_process_tree(pid: int) -> ProcessInfo | None:
     """Get full process tree rooted at pid."""
     try:
         proc = psutil.Process(pid)
@@ -208,7 +207,7 @@ def get_process_tree(pid: int) -> Optional[ProcessInfo]:
         return None
 
 
-def get_process_info(pid: int) -> Optional[ProcessInfo]:
+def get_process_info(pid: int) -> ProcessInfo | None:
     """Get single process info without children."""
     try:
         proc = psutil.Process(pid)
@@ -442,7 +441,7 @@ def _detect_agent_type_from_text(text: str) -> str:
     return ""
 
 
-def _git_root(cwd: str) -> Optional[str]:
+def _git_root(cwd: str) -> str | None:
     """Find the git root directory for a given cwd."""
     if not cwd or not os.path.isdir(cwd):
         return None
@@ -450,29 +449,54 @@ def _git_root(cwd: str) -> Optional[str]:
 
 
 def derive_project_name(cwd: str) -> ProjectNameInfo:
-    """Derive a human-readable project name from the cwd."""
+    """Derive a human-readable project name from the cwd.
+
+    Avoids leaking the OS username when the cwd is the user's home directory
+    (e.g. `~` becomes "(no project · ~)" instead of the username). For paths
+    inside home but outside any git repo, also collapses the home prefix to `~`.
+    """
     if not cwd:
         return ProjectNameInfo(name="unknown", short_cwd="unknown")
 
     git_root = _git_root(cwd)
-    git_branch = None
-    if git_root:
-        git_branch = get_git_branch(git_root) or None
+    git_branch = get_git_branch(git_root) if git_root else None
 
-    # Use git root basename if available, otherwise cwd basename
+    home = str(Path.home())
+    home_real = os.path.realpath(home)
+    cwd_real = os.path.realpath(cwd)
+
+    # Collapse home prefix so we never expose the OS username on the dashboard
+    # ("/Users/wanghao206/foo" -> "~/foo").
+    def _tildeify(p: str) -> str:
+        try:
+            real = os.path.realpath(p)
+        except OSError:
+            real = p
+        if real == home_real:
+            return "~"
+        if real.startswith(home_real + os.sep):
+            return "~/" + real[len(home_real) + 1:]
+        return p
+
     if git_root:
-        name = os.path.basename(git_root)
+        name = os.path.basename(git_root.rstrip("/")) or "unknown"
+    elif cwd_real == home_real or cwd_real == "/":
+        # Don't use basename(home) — that would surface the username.
+        name = "(no project · ~)" if cwd_real == home_real else "(no project · /)"
     else:
-        name = os.path.basename(cwd)
+        # cwd basename is fine for non-home, non-root paths.
+        name = os.path.basename(cwd.rstrip("/")) or "unknown"
 
-    # Short cwd: show last 2-3 components
-    parts = cwd.rstrip("/").split("/")
-    short_cwd = "/".join(parts[-3:]) if len(parts) > 3 else cwd
+    short_cwd = _tildeify(cwd)
+    if len(short_cwd) > 60 and "/" in short_cwd:
+        parts = short_cwd.split("/")
+        if len(parts) > 3:
+            short_cwd = ".../" + "/".join(parts[-3:])
 
     return ProjectNameInfo(
-        name=name or "unknown",
+        name=name,
         short_cwd=short_cwd or cwd,
-        git_root=git_root,
+        git_root=_tildeify(git_root) if git_root else None,
         git_branch=git_branch,
     )
 
@@ -503,26 +527,96 @@ def make_display_name(session_title: str | None, project_name: str, agent_type: 
     return f"{project_name or 'unknown'} · {_agent_display(agent_type)}"
 
 
+# Directories that are NEVER project roots — skip them entirely so we don't
+# os.walk() into the user's whole home / system on every discover() call.
+_NON_PROJECT_DIRS = {
+    "/",
+    "",
+    str(Path.home()),
+    "/Applications",
+    "/System",
+    "/Library",
+    "/usr",
+    "/private",
+    "/tmp",
+    "/var",
+    "/opt",
+}
+
+_RECENT_FILES_SKIP_DIRS = frozenset({
+    "node_modules", "__pycache__", "venv", ".venv", "env", ".env",
+    "dist", "build", "target", "out",
+    ".git", ".hg", ".svn",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+    "Library", "Caches", ".Trash", ".cache", ".npm", ".cursor",
+    "logs", "log",
+})
+
+_RECENT_FILES_MAX_DEPTH = 4
+_RECENT_FILES_MAX_VISITED = 5_000
+_RECENT_FILES_TIME_BUDGET_SEC = 0.75
+
+
+def _is_desktop_app_cwd(cwd: str | None) -> bool:
+    """Detect macOS desktop apps masquerading as agent processes.
+
+    Things like /Applications/Gemini.app and /Applications/Codex.app run with
+    cwd `/` and match our agent name regex but are not coding sessions.
+    """
+    if not cwd:
+        return False
+    if cwd == "/":
+        return True
+    if cwd.startswith("/Applications/") or cwd.startswith("/System/"):
+        return True
+    return False
+
+
 def _recent_modified_files(cwd: str, seconds: int = 60) -> list[str]:
-    """Find files modified in the last N seconds under cwd."""
+    """Find files modified in the last N seconds under cwd.
+
+    Hard-capped on every axis (depth, file count, wall-clock) so a careless
+    cwd like `~` or `/` cannot freeze the discover endpoint.
+    Returns an empty list for known non-project roots (home, /, /Applications…).
+    """
     if not cwd or not os.path.isdir(cwd):
         return []
+    if os.path.realpath(cwd) in {os.path.realpath(p) for p in _NON_PROJECT_DIRS if p}:
+        return []
+
     cutoff = time.time() - seconds
-    modified = []
+    deadline = time.time() + _RECENT_FILES_TIME_BUDGET_SEC
+    base_depth = cwd.rstrip(os.sep).count(os.sep)
+    visited = 0
+    modified: list[str] = []
+
     try:
-        for root, dirs, files in os.walk(cwd):
-            # Skip hidden dirs and common non-project dirs
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__", "venv", ".venv")]
+        for root, dirs, files in os.walk(cwd, followlinks=False):
+            if time.time() > deadline or visited > _RECENT_FILES_MAX_VISITED:
+                break
+            depth = root.rstrip(os.sep).count(os.sep) - base_depth
+            if depth >= _RECENT_FILES_MAX_DEPTH:
+                dirs[:] = []
+            else:
+                dirs[:] = [
+                    d for d in dirs
+                    if not d.startswith(".") and d not in _RECENT_FILES_SKIP_DIRS
+                ]
             for f in files:
+                visited += 1
+                if visited > _RECENT_FILES_MAX_VISITED:
+                    break
                 fpath = os.path.join(root, f)
                 try:
                     if os.path.getmtime(fpath) >= cutoff:
                         modified.append(os.path.relpath(fpath, cwd))
+                        if len(modified) >= 20:
+                            return modified
                 except OSError:
                     continue
     except Exception:
         pass
-    return modified[:20]  # Cap at 20
+    return modified[:20]
 
 
 def _candidate_log_files(project_dir: str, include_global: bool = False) -> list[Path]:
@@ -900,6 +994,16 @@ def discover_sessions() -> list[DiscoveredSession]:
     if not procs:
         return []
 
+    # Drop processes whose cwd is `/` or inside /Applications — these are
+    # Mac desktop apps (Gemini.app, Codex.app, …) that happen to be named
+    # like agents but are not actual coding sessions in any project.
+    procs = [
+        p for p in procs
+        if not _is_desktop_app_cwd(p.cwd)
+    ]
+    if not procs:
+        return []
+
     sessions: list[DiscoveredSession] = []
     for root in sorted(procs, key=lambda p: (p.cwd or "unknown", p.pid)):
         cwd = root.cwd or "unknown"
@@ -1178,7 +1282,7 @@ def _count_open_files(pid: int) -> int:
         return 0
 
 
-def get_resource_metrics(pid: int) -> Optional[ResourceMetrics]:
+def get_resource_metrics(pid: int) -> ResourceMetrics | None:
     """Collect full resource metrics for a process."""
     try:
         proc = psutil.Process(pid)
