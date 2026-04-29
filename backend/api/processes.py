@@ -116,7 +116,7 @@ async def api_ignore_session(session_id: str):
     existing = matching_rules("ignored", session)
     if existing:
         return existing[0].model_dump(mode="json")
-    rule = create_rule("ignored", "project_key", session.project_key, session.display_name or session.project)
+    rule = create_rule("ignored", "session_id", session.session_id, session.display_name or session.project)
     return rule.model_dump(mode="json")
 
 
