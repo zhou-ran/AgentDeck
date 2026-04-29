@@ -28,6 +28,15 @@ def test_detect_agent_type_returns_evidence_from_process_cmd():
     assert result.evidence
 
 
+def test_detect_agent_type_recognizes_kimi_code_process_name():
+    proc = ProcessInfo(pid=10, ppid=1, name="Kimi Code", cmdline=["Kimi Code", "", ""])
+
+    result = detect_agent_type(proc, [], "/tmp/project")
+
+    assert result.agent_type == "kimi-code"
+    assert result.confidence >= 0.8
+
+
 def test_detect_agent_type_uses_session_source_when_process_is_generic(tmp_path: Path):
     proc = ProcessInfo(pid=10, ppid=1, name="node", cmdline=["node", "cli.js"])
     source = tmp_path / ".kimi-code" / "session.jsonl"

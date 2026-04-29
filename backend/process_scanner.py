@@ -38,9 +38,9 @@ from backend.git_utils import (
 # ---- Root agent patterns for detecting top-level agents ----
 ROOT_AGENT_PATTERNS = [
     re.compile(r"codex\b", re.I),
-    re.compile(r"claude[-_]?code\b", re.I),
+    re.compile(r"claude[-_ ]?code\b", re.I),
     re.compile(r"claude\b", re.I),
-    re.compile(r"kimi[-_]?code\b", re.I),
+    re.compile(r"kimi[-_ ]?code\b", re.I),
     re.compile(r"kimi\b", re.I),
     re.compile(r"aider\b", re.I),
     re.compile(r"gemini\b", re.I),
@@ -163,8 +163,8 @@ def is_process_alive(pid: int) -> bool:
 def _agent_type_from_text(text: str) -> str:
     text_lower = text.lower()
     for agent_type, pattern in (
-        ("claude-code", re.compile(r"claude[-_]?code\b", re.I)),
-        ("kimi-code", re.compile(r"kimi[-_]?code\b", re.I)),
+        ("claude-code", re.compile(r"claude[-_ ]?code\b", re.I)),
+        ("kimi-code", re.compile(r"kimi[-_ ]?code\b", re.I)),
         ("codex", re.compile(r"codex\b", re.I)),
         ("claude", re.compile(r"claude\b", re.I)),
         ("kimi", re.compile(r"kimi\b", re.I)),
@@ -367,9 +367,17 @@ def _detect_agent_type(info: ProcessInfo) -> str:
 def _detect_agent_type_from_text(text: str) -> str:
     """Detect agent type from arbitrary text (cmdline, session file content)."""
     text_lower = text.lower()
-    for kw in ("codex", "claude-code", "claude", "aider", "gemini", "kimi-code", "kimi"):
-        if kw in text_lower:
-            return kw
+    for agent_type, pattern in (
+        ("claude-code", re.compile(r"claude[-_ ]?code\b", re.I)),
+        ("kimi-code", re.compile(r"kimi[-_ ]?code\b", re.I)),
+        ("codex", re.compile(r"codex\b", re.I)),
+        ("claude", re.compile(r"claude\b", re.I)),
+        ("kimi", re.compile(r"kimi\b", re.I)),
+        ("aider", re.compile(r"aider\b", re.I)),
+        ("gemini", re.compile(r"gemini\b", re.I)),
+    ):
+        if pattern.search(text_lower):
+            return agent_type
     return ""
 
 
@@ -417,9 +425,9 @@ def derive_project_key(cwd: str, git_root: str | None = None) -> str:
 def _agent_display(agent_type: str) -> str:
     labels = {
         "codex": "Codex",
-        "kimi-code": "Kimi",
+        "kimi-code": "Kimi Code",
         "kimi": "Kimi",
-        "claude-code": "Claude",
+        "claude-code": "Claude Code",
         "claude": "Claude",
         "aider": "Aider",
         "gemini": "Gemini",
@@ -818,44 +826,34 @@ def _check_child_processes(info: ProcessInfo) -> tuple[str, str] | None:
 
 
 def discover_sessions() -> list[DiscoveredSession]:
-    """Discover agent processes and group them by cwd into sessions.
+    """Discover agent processes as independent sessions.
 
-    Each session represents a project directory with one or more agent processes.
-    The process with the lowest PID in each cwd group becomes the root_process.
+    Each top-level agent process is one session. Multiple agents may work in the
+    same project/worktree simultaneously, so grouping by cwd hides real sessions.
     """
     procs = discover_agent_processes()
     if not procs:
         return []
 
-    # Group by cwd
-    by_cwd: dict[str, list[ProcessInfo]] = {}
-    for p in procs:
-        cwd = p.cwd or "unknown"
-        by_cwd.setdefault(cwd, []).append(p)
-
     sessions: list[DiscoveredSession] = []
-    for cwd, group in by_cwd.items():
-        # Sort by PID, pick lowest as root
-        group.sort(key=lambda p: p.pid)
-        root = group[0]
-        all_pids = [p.pid for p in group]
+    for root in sorted(procs, key=lambda p: (p.cwd or "unknown", p.pid)):
+        cwd = root.cwd or "unknown"
 
-        # Also collect child PIDs recursively
         def _collect_pids(pi: ProcessInfo) -> list[int]:
             pids = [pi.pid]
             for c in pi.children:
                 pids.extend(_collect_pids(c))
             return pids
 
-        all_pids_set: set[int] = set()
-        for p in group:
-            all_pids_set.update(_collect_pids(p))
+        all_pids_set = set(_collect_pids(root))
 
         # Generate session_id from cwd
         if cwd == "unknown":
             session_id = f"unknown-{root.pid}"
         else:
-            h = hashlib.md5(cwd.encode()).hexdigest()[:8]
+            agent = _detect_agent_type(root)
+            seed = f"{cwd}|{agent}|{root.pid}|{int(root.create_time or 0)}"
+            h = hashlib.md5(seed.encode()).hexdigest()[:8]
             session_id = f"discovered-{h}"
 
         sessions.append(DiscoveredSession(

@@ -1,27 +1,31 @@
 import { useSSE } from './hooks/useSSE'
 import { Dashboard } from './components/Dashboard'
+import { demoScanMeta, demoSessions, demoSystemMetrics, demoTasks } from './mock/demoData'
 
 export default function App() {
-  const { tasks, discovered, systemMetrics, scanMeta, connected, error } = useSSE()
+  const demoMode = new URLSearchParams(window.location.search).get('demo') === '1'
+  const { tasks, discovered, systemMetrics, scanMeta, connected, error } = useSSE(!demoMode)
+
+  const appTasks = demoMode ? demoTasks : tasks
+  const appDiscovered = demoMode ? demoSessions : discovered
+  const appSystemMetrics = demoMode ? demoSystemMetrics : systemMetrics
+  const appScanMeta = demoMode ? demoScanMeta : scanMeta
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-gray-800 px-6 py-3">
-        <div className="max-w-7xl mx-auto flex items-center gap-3">
-          <h1 className="text-base font-bold tracking-tight">
-            <span className="text-cyan-400">本地牛马监工台</span>
-          </h1>
-          <span className="text-gray-600 text-xs">Local Agent Foreman</span>
+      {!demoMode && error && (
+        <div className="fixed left-1/2 top-4 z-50 w-[min(680px,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-700 shadow-lg backdrop-blur-xl dark:text-red-300">
+          {error}
         </div>
-      </header>
-      <main className="max-w-7xl mx-auto px-6 py-6">
-        {error && (
-          <div className="mb-4 rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-200">
-            {error}
-          </div>
-        )}
-        <Dashboard tasks={tasks} discovered={discovered} systemMetrics={systemMetrics} scanMeta={scanMeta} connected={connected} />
-      </main>
+      )}
+      <Dashboard
+        tasks={appTasks}
+        discovered={appDiscovered}
+        systemMetrics={appSystemMetrics}
+        scanMeta={appScanMeta}
+        connected={demoMode ? true : connected}
+        demoMode={demoMode}
+      />
     </div>
   )
 }
