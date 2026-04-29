@@ -2,14 +2,31 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import os
+import re
+import subprocess
 import time
+from datetime import datetime, timedelta
 from typing import Optional
+from pathlib import Path
 
 import psutil
 
-from backend.config import AGENT_KEYWORDS
-from backend.models import CpuMemSample, DiscoveredSession, ProcessInfo, ResourceMetrics, SystemMetrics
+from backend.config import get_log_dir
+from backend.log_manager import get_log_tail
+from backend.models import (
+    ActivityTimelineItem,
+    CpuMemSample,
+    DiscoveredSession,
+    InstructionInfo,
+    ProcessInfo,
+    ProjectNameInfo,
+    ProjectRuntimeStatus,
+    ResourceMetrics,
+    SystemMetrics,
+    TaskStatus,
+)
 
 
 def _format_elapsed(start_time: float) -> str:
@@ -96,25 +113,302 @@ def is_process_alive(pid: int) -> bool:
     return psutil.pid_exists(pid)
 
 
+ROOT_AGENT_PATTERNS = ("codex", "kimi-code", "kimi", "claude-code", "claude", "aider", "gemini")
+WAITING_RE = re.compile(
+    r"(waiting for input|approve\?|continue\?|confirm|permission|please provide|let me know|"
+    r"which .+\?|需要确认|是否继续|请确认|y/n)",
+    re.I,
+)
+ERROR_RE = re.compile(r"(Traceback|ERROR|Exception|command not found|permission denied|quota exceeded|API error|rate limit|认证失败)", re.I)
+INSTRUCTION_LABEL_RE = re.compile(r"^\s*(?:User|Human|Prompt|Task|Instruction|用户|用户指令|目标)\s*[:：]\s*(.+)\s*$", re.I)
+
+
+def _cmd_text(info: ProcessInfo) -> str:
+    return " ".join(info.cmdline).strip() or info.name
+
+
+def _detect_agent_type_from_text(text: str) -> str:
+    low = text.lower()
+    if "kimi-code" in low or "kimi" in low:
+        return "kimi-code"
+    if "claude-code" in low or "claude" in low:
+        return "claude"
+    for kw in ("codex", "aider", "gemini"):
+        if kw in low:
+            return kw
+    return "unknown"
+
+
+def _detect_agent_type(info: ProcessInfo) -> str:
+    return _detect_agent_type_from_text(f"{info.name} {_cmd_text(info)}")
+
+
+def _is_root_agent_proc(proc: psutil.Process) -> bool:
+    try:
+        text = f"{proc.name()} {' '.join(proc.cmdline())}"
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+    return _detect_agent_type_from_text(text) != "unknown"
+
+
+def _flatten_processes(root: ProcessInfo) -> list[ProcessInfo]:
+    result: list[ProcessInfo] = []
+    def walk(p: ProcessInfo) -> None:
+        result.append(p)
+        for child in p.children:
+            walk(child)
+    walk(root)
+    return result
+
+
+def _short_command(command: str, max_len: int = 96) -> str:
+    command = " ".join(command.split())
+    return command if len(command) <= max_len else command[: max_len - 3] + "..."
+
+
+def _git_root(cwd: str) -> str:
+    if not cwd or cwd == "unknown":
+        return cwd
+    try:
+        result = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, text=True, timeout=3)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return cwd
+
+
+def _short_path(path: str) -> str:
+    home = str(Path.home())
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    marker = f"{os.sep}projects{os.sep}"
+    if marker in path:
+        first = path.split(marker, 1)[1].split(os.sep, 1)[0]
+        return f".../projects/{first}"
+    parts = Path(path).parts
+    return os.path.join("...", *parts[-3:]) if len(parts) > 4 else path
+
+
+def derive_project_name(cwd: str) -> ProjectNameInfo:
+    if not cwd or cwd == "unknown":
+        return ProjectNameInfo(display_name="unknown", project_dir=cwd or "", short_cwd="unknown")
+    project_dir = _git_root(cwd)
+    marker = f"{os.sep}projects{os.sep}"
+    if marker in project_dir:
+        head, tail = project_dir.split(marker, 1)
+        project_dir = f"{head}{marker}{tail.split(os.sep, 1)[0]}"
+    display = Path(project_dir).name or project_dir
+    base, workspace = display, ""
+    match = re.match(r"^\d+\.(?P<project>.+)_(?P<workspace>[A-Za-z0-9-]+)$", display)
+    if match:
+        base, workspace = match.group("project"), match.group("workspace")
+    return ProjectNameInfo(display_name=display, base_project=base, workspace=workspace, project_dir=project_dir, short_cwd=_short_path(project_dir))
+
+
+def _run_git(project_dir: str, args: list[str]) -> str:
+    try:
+        result = subprocess.run(["git"] + args, cwd=project_dir, capture_output=True, text=True, timeout=5)
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
+
+
+def _git_changed_files(project_dir: str) -> list[str]:
+    changed: set[str] = set()
+    for line in _run_git(project_dir, ["status", "--short"]).splitlines():
+        if len(line) > 2:
+            name = line[2:].strip()
+            changed.add(name.split(" -> ", 1)[-1])
+    changed.update(line.strip() for line in _run_git(project_dir, ["diff", "--name-only"]).splitlines() if line.strip())
+    return sorted(changed)
+
+
+def _recent_modified_files(project_dir: str, limit: int = 10) -> list[str]:
+    root = Path(project_dir)
+    if not root.is_dir():
+        return []
+    ignored = {".git", "node_modules", "__pycache__", ".venv", "logs", ".pytest_cache", "dist", "build"}
+    found: list[tuple[float, str]] = []
+    scanned = 0
+    try:
+        for path in root.rglob("*"):
+            scanned += 1
+            if scanned > 5000:
+                break
+            if not path.is_file() or any(part in ignored for part in path.parts):
+                continue
+            st = path.stat()
+            found.append((st.st_mtime, str(path.relative_to(root))))
+    except OSError:
+        return []
+    found.sort(key=lambda x: x[0], reverse=True)
+    return [name for _, name in found[:limit]]
+
+
+def _is_sensitive_log_candidate(path: Path) -> bool:
+    parts = {p.lower() for p in path.parts}
+    if parts & {"credentials", "credential", "secrets", "secret", "tokens", "token", "auth"}:
+        return True
+    name = path.name.lower()
+    return any(x in name for x in ("credential", "token", "secret", "auth", "models_cache", "config"))
+
+
+def _candidate_log_files(project_dir: str, agent_type: str) -> list[Path]:
+    project = Path(project_dir) if project_dir and project_dir != "unknown" else None
+    home = Path.home()
+    bases: list[Path] = []
+    if project:
+        bases += [project / ".codex", project / ".claude", project / ".kimi", project / ".kimi-code", project / ".agent", project / ".agent_foreman", project / "logs", project / "AGENT_LOG.md", project / "progress.md"]
+    bases += [home / ".codex" / "sessions", home / ".codex" / "logs", home / ".codex" / "log", home / ".codex" / "history.jsonl", home / ".claude" / "projects", home / ".claude" / "logs", home / ".kimi" / "logs", home / ".kimi" / "user-history", home / ".kimi-code" / "logs", home / ".kimi-code" / "user-history", get_log_dir()]
+    suffixes = {".log", ".jsonl", ".json", ".md", ".txt"}
+    candidates: list[Path] = []
+    for base in bases:
+        try:
+            if _is_sensitive_log_candidate(base):
+                continue
+            if base.is_file() and base.suffix.lower() in suffixes:
+                candidates.append(base)
+            elif base.is_dir():
+                for path in base.rglob("*"):
+                    if len(candidates) >= 80:
+                        break
+                    if path.is_file() and path.suffix.lower() in suffixes and not _is_sensitive_log_candidate(path):
+                        candidates.append(path)
+        except OSError:
+            continue
+    with_mtime = []
+    for path in candidates:
+        try:
+            with_mtime.append((path.stat().st_mtime, path))
+        except OSError:
+            pass
+    with_mtime.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in with_mtime[:40]]
+
+
+def _read_tail_text(path: Path, max_bytes: int = 262_144) -> str:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            return f.read(max_bytes).decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _extract_instruction_from_text(text: str, source: Path, mtime: float) -> list[InstructionInfo]:
+    items: list[InstructionInfo] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        parsed = None
+        if line.startswith("{") and '"role"' in line:
+            try:
+                obj = json.loads(line)
+                if str(obj.get("role", "")).lower() == "user":
+                    content = obj.get("content")
+                    parsed = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if parsed is None:
+            match = INSTRUCTION_LABEL_RE.match(line)
+            if match:
+                parsed = match.group(1).strip()
+        if parsed:
+            items.append(InstructionInfo(text=parsed[:2000], source_file=str(source), source_type="agent transcript", timestamp=datetime.fromtimestamp(mtime), confidence=0.8))
+    return items
+
+
+def extract_user_instruction(session: DiscoveredSession) -> InstructionInfo:
+    candidates: list[InstructionInfo] = []
+    for path in _candidate_log_files(session.project.project_dir or session.cwd, session.agent_type):
+        try:
+            candidates += _extract_instruction_from_text(_read_tail_text(path), path, path.stat().st_mtime)
+        except OSError:
+            continue
+        if len(candidates) >= 20:
+            break
+    candidates.sort(key=lambda c: c.timestamp or datetime.min, reverse=True)
+    session.instruction_candidates = candidates[:5]
+    return candidates[0] if candidates else InstructionInfo()
+
+
+def _collect_active_commands(processes: list[ProcessInfo], root_pid: int) -> list[str]:
+    active = []
+    needles = ("pytest", "npm", "pnpm", "yarn", "git", "python", "rscript", "bash", "node", "rg", "grep", "find", "fd", "uv")
+    for proc in processes:
+        if proc.pid == root_pid:
+            continue
+        text = _cmd_text(proc)
+        if any(n in text.lower() for n in needles):
+            active.append(text)
+    return active[:8]
+
+
+def get_project_runtime_status(project_dir: str, processes: list[ProcessInfo], recent_logs: list[str]) -> ProjectRuntimeStatus:
+    changed = _git_changed_files(project_dir) if project_dir and Path(project_dir).is_dir() else []
+    branch = _run_git(project_dir, ["branch", "--show-current"]) if project_dir and Path(project_dir).is_dir() else ""
+    recent = _recent_modified_files(project_dir)
+    tests, servers = [], []
+    for proc in processes:
+        cmd = _cmd_text(proc)
+        low = cmd.lower()
+        if "pytest" in low or "npm test" in low or "pnpm test" in low or "yarn test" in low:
+            tests.append(_short_command(cmd))
+        if any(x in low for x in ("vite", "uvicorn", "streamlit", "jupyter", "rstudio-server")):
+            servers.append(_short_command(cmd))
+    errors = [line[-300:] for line in recent_logs if ERROR_RE.search(line)][-5:]
+    last = None
+    if recent:
+        try:
+            last = datetime.fromtimestamp((Path(project_dir) / recent[0]).stat().st_mtime)
+        except OSError:
+            pass
+    return ProjectRuntimeStatus(git_branch=branch, git_dirty_files_count=len(changed), git_changed_files=changed[:30], recent_modified_files=recent, test_processes=tests[:5], server_processes=servers[:5], error_hints=errors, last_activity_time=last)
+
+
+def infer_session_activity(
+    processes: list[ProcessInfo],
+    project_status: ProjectRuntimeStatus,
+    recent_logs: list[str],
+    root_pid: int,
+    heartbeat_ts: float | None = None,
+    recent_output: str = "",
+) -> tuple[TaskStatus, str, str]:
+    active = _collect_active_commands(processes, root_pid)
+    blob = "\n".join(active).lower()
+    log_blob = "\n".join(recent_logs[-30:] + ([recent_output] if recent_output else []))
+    if WAITING_RE.search(log_blob):
+        return TaskStatus.waiting_input, "waiting prompt detected in output", "Possibly waiting for user input"
+    if "pytest" in blob:
+        return TaskStatus.testing, "pytest child process detected", f"Running tests: {_short_command(active[0])}"
+    if any(x in blob for x in ("npm test", "pnpm test", "yarn test")):
+        return TaskStatus.testing, "frontend test child process detected", "Running frontend tests"
+    if "git" in blob:
+        return TaskStatus.git_ops, "git child process detected", f"Inspecting or modifying git state: {_short_command(active[0])}"
+    if any(x in blob for x in ("rg", "grep", "find", "fd")):
+        return TaskStatus.searching, "search child process detected", "Searching codebase"
+    if any(x in blob for x in ("python", "rscript", "bash", "node", "uv")):
+        return TaskStatus.running_script, "script child process detected", f"Running script: {_short_command(active[0])}"
+    if project_status.last_activity_time and datetime.now() - project_status.last_activity_time <= timedelta(seconds=60):
+        return TaskStatus.editing, "project file modified within 60s", "Editing files: " + ", ".join(project_status.recent_modified_files[:3])
+    cpu = sum(p.cpu_percent for p in processes)
+    if heartbeat_ts and time.time() - heartbeat_ts <= 60:
+        return TaskStatus.busy, "heartbeat updated within 60s", "Agent is active"
+    if cpu > 3:
+        return TaskStatus.busy, "CPU above 3%", "Agent is active"
+    return TaskStatus.idle, "no CPU/child/file activity detected", "No recent activity; possibly waiting or idle"
+
+
 def discover_agent_processes() -> list[ProcessInfo]:
-    """Scan all running processes and find ones matching agent keywords."""
+    """Scan all running processes and find coding agent root processes."""
     results = []
     seen_pids: set[int] = set()
 
     for proc in psutil.process_iter(attrs=["pid", "name", "cmdline"]):
         try:
-            cmdline_list = proc.info.get("cmdline") or []
-            name = proc.info.get("name") or ""
-            cmdline_str = " ".join(cmdline_list).lower()
-            name_lower = name.lower()
-
-            is_agent = False
-            for kw in AGENT_KEYWORDS:
-                if kw in name_lower or kw in cmdline_str:
-                    is_agent = True
-                    break
-
-            if not is_agent:
+            if not _is_root_agent_proc(proc):
                 continue
 
             pid = proc.info["pid"]
@@ -131,75 +425,58 @@ def discover_agent_processes() -> list[ProcessInfo]:
     return results
 
 
-def _detect_agent_type(info: ProcessInfo) -> str:
-    """Detect the agent type from process name/cmdline."""
-    name_lower = info.name.lower()
-    cmdline_lower = " ".join(info.cmdline).lower()
-    for kw in ("codex", "claude", "aider", "gemini"):
-        if kw in name_lower or kw in cmdline_lower:
-            return kw
-    for kw in ("pytest", "Rscript", "cargo", "go"):
-        if kw in name_lower or kw in cmdline_lower:
-            return kw
-    # Generic runners
-    for kw in ("node", "python", "python3", "uv", "npm", "pnpm", "bun"):
-        if kw in name_lower or kw in cmdline_lower:
-            return kw
-    return "unknown"
+def scan_agent_sessions() -> list[DiscoveredSession]:
+    roots = discover_agent_processes()
+    sessions: list[DiscoveredSession] = []
+    for root in roots:
+        cwd = root.cwd or "unknown"
+        project = derive_project_name(cwd)
+        processes = _flatten_processes(root)
+        h = hashlib.md5(f"{project.project_dir}:{root.pid}:{root.create_time}".encode()).hexdigest()[:10]
+        session = DiscoveredSession(
+            session_id=f"agent-{h}",
+            cwd=cwd,
+            root_process=root,
+            all_pids=sorted({p.pid for p in processes}),
+            agent_type=_detect_agent_type(root),
+            root_pid=root.pid,
+            root_cmd=_cmd_text(root),
+            user=root.user,
+            project_name=project.display_name,
+            project=project,
+            short_cwd=project.short_cwd,
+            started_at=datetime.fromtimestamp(root.create_time) if root.create_time else None,
+            elapsed=root.elapsed,
+            child_processes=[p for p in processes if p.pid != root.pid],
+            active_commands=_collect_active_commands(processes, root.pid),
+            cpu_percent=sum(p.cpu_percent for p in processes),
+            memory_percent=sum(p.memory_percent for p in processes),
+            confidence=0.9,
+        )
+        session.log_candidates = [str(p) for p in _candidate_log_files(project.project_dir or cwd, session.agent_type)[:8]]
+        for log_path in session.log_candidates[:3]:
+            session.recent_logs.extend(get_log_tail(Path(log_path), lines=20))
+        session.recent_logs = session.recent_logs[-60:]
+        session.project_status = get_project_runtime_status(project.project_dir or cwd, processes, session.recent_logs)
+        session.git_status = {"branch": session.project_status.git_branch, "dirty_files": session.project_status.git_dirty_files_count, "changed_files": session.project_status.git_changed_files}
+        session.recent_changed_files = session.project_status.recent_modified_files
+        session.error_hints = session.project_status.error_hints
+        status, reason, activity = infer_session_activity(processes, session.project_status, session.recent_logs, root.pid)
+        session.status, session.status_reason, session.current_activity = status, reason, activity
+        instruction = extract_user_instruction(session)
+        session.instruction = instruction
+        session.user_instruction = instruction.text
+        session.instruction_source = instruction.source_file
+        session.timeline = [ActivityTimelineItem(timestamp=session.started_at or datetime.now(), label=f"started {session.agent_type}", source="process")]
+        if session.project_status.last_activity_time:
+            session.timeline.append(ActivityTimelineItem(timestamp=session.project_status.last_activity_time, label=session.current_activity, source="project"))
+        sessions.append(session)
+    sessions.sort(key=lambda s: (s.project_name.lower(), s.root_pid))
+    return sessions
 
 
 def discover_sessions() -> list[DiscoveredSession]:
-    """Discover agent processes and group them by cwd into sessions.
-
-    Each session represents a project directory with one or more agent processes.
-    The process with the lowest PID in each cwd group becomes the root_process.
-    """
-    procs = discover_agent_processes()
-    if not procs:
-        return []
-
-    # Group by cwd
-    by_cwd: dict[str, list[ProcessInfo]] = {}
-    for p in procs:
-        cwd = p.cwd or "unknown"
-        by_cwd.setdefault(cwd, []).append(p)
-
-    sessions: list[DiscoveredSession] = []
-    for cwd, group in by_cwd.items():
-        # Sort by PID, pick lowest as root
-        group.sort(key=lambda p: p.pid)
-        root = group[0]
-        all_pids = [p.pid for p in group]
-
-        # Also collect child PIDs recursively
-        def _collect_pids(pi: ProcessInfo) -> list[int]:
-            pids = [pi.pid]
-            for c in pi.children:
-                pids.extend(_collect_pids(c))
-            return pids
-
-        all_pids_set: set[int] = set()
-        for p in group:
-            all_pids_set.update(_collect_pids(p))
-
-        # Generate session_id from cwd
-        if cwd == "unknown":
-            session_id = f"unknown-{root.pid}"
-        else:
-            h = hashlib.md5(cwd.encode()).hexdigest()[:8]
-            session_id = f"discovered-{h}"
-
-        sessions.append(DiscoveredSession(
-            session_id=session_id,
-            cwd=cwd,
-            root_process=root,
-            all_pids=sorted(all_pids_set),
-            agent_type=_detect_agent_type(root),
-        ))
-
-    # Sort by cwd for stable ordering
-    sessions.sort(key=lambda s: s.cwd)
-    return sessions
+    return scan_agent_sessions()
 
 
 def get_process_cpu_mem(pid: int) -> tuple[float, float]:

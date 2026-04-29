@@ -7,7 +7,10 @@ from pathlib import Path
 from backend.log_manager import get_log_tail
 from backend.models import Task, TaskStatus
 
-_ERROR_RE = re.compile(r"(Traceback|ERROR|Failed|Exception)", re.IGNORECASE)
+_ERROR_RE = re.compile(
+    r"(Traceback|ERROR|Exception|command not found|permission denied|quota exceeded|API error|rate limit|认证失败)",
+    re.IGNORECASE,
+)
 
 
 def _log_tail(path: Path, lines: int = 50) -> str:

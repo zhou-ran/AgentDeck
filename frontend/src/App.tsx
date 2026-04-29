@@ -9,9 +9,9 @@ export default function App() {
       <header className="border-b border-gray-800 px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center gap-3">
           <h1 className="text-base font-bold tracking-tight">
-            <span className="text-cyan-400">Agent</span>Status
+            Local Coding Agent Foreman
           </h1>
-          <span className="text-gray-600 text-xs">Agent Supervisor Dashboard</span>
+          <span className="text-gray-600 text-xs">Live Agent Sessions</span>
         </div>
       </header>
       <main className="max-w-7xl mx-auto px-6 py-6">

@@ -14,7 +14,8 @@ DEFAULT_LOGS_DIR = Path.home() / "agent_logs"
 DEFAULT_CONFIG_FILE = DEFAULT_CONFIG_DIR / "config.yaml"
 
 AGENT_KEYWORDS = [
-    "codex", "claude", "aider", "gemini",
+    "codex", "claude", "claude-code", "aider", "gemini",
+    "kimi", "kimi-code",
     "node", "python", "python3", "uv", "npm", "pnpm", "bun",
     "git", "pytest", "Rscript", "cargo", "go",
 ]

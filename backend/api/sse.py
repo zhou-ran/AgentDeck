@@ -50,7 +50,10 @@ async def api_stream():
                 task_dict.update(get_task_log_metadata(t.task_id))
 
                 # Attach resource metrics for running tasks
-                if t.pid and t.status in ("running", "idle"):
+                if t.pid and t.status in (
+                    "running", "busy", "testing", "editing", "searching",
+                    "git_ops", "running_script", "waiting", "idle", "waiting_input",
+                ):
                     active_pids.add(t.pid)
                     record_sample(t.pid)
                     res = get_resource_metrics(t.pid)
@@ -73,7 +76,7 @@ async def api_stream():
             sessions_data = [s.model_dump(mode="json") for s in sessions]
 
             # System metrics
-            project_dirs = list({t.project_dir for t in tasks if t.project_dir})
+            project_dirs = list({t.project_dir for t in tasks if t.project_dir} | {s.project.project_dir for s in sessions if s.project.project_dir})
             sys_metrics = get_system_metrics(project_dirs).model_dump()
 
             yield {

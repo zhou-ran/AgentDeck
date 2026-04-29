@@ -57,7 +57,7 @@ export function TaskDetail({ task, onBack }: { task: Task; onBack: () => void })
         {taskData.has_error_hint && (
           <span className="text-red-400 text-sm">⚠ errors detected in log</span>
         )}
-        {(taskData.status === 'running' || taskData.status === 'idle') && (
+        {(['running', 'busy', 'testing', 'editing', 'searching', 'git_ops', 'running_script', 'waiting', 'idle', 'waiting_input'].includes(taskData.status)) && (
           <button
             onClick={handleStop}
             className="ml-auto px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-sm"

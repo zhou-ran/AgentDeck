@@ -125,6 +125,69 @@ def start(name: str, project_dir: str, goal: str, feature: str, criteria: str, t
     click.echo(f"\nUse 'agent-foreman-local tail {task_id}' to watch output")
 
 
+@cli.command(name="run")
+@click.argument("agent_type")
+@click.option("--name", required=True, help="Stable name for the recorded task")
+@click.option("--dir", "project_dir", required=True, help="Working directory for the agent")
+@click.option("--instruction", required=True, help="Original instruction given to the agent")
+@click.argument("command", nargs=-1, required=True, type=click.UNPROCESSED)
+def run_agent(agent_type: str, name: str, project_dir: str, instruction: str, command: tuple[str]):
+    """Start an agent and record its instruction/logs for dashboard display."""
+    task_id = name
+    project_dir = os.path.abspath(project_dir)
+    safe, reason = is_safe_project_dir(project_dir)
+    if not safe:
+        click.echo(f"Error: {reason}", err=True)
+        sys.exit(1)
+
+    cmd = list(command)
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        click.echo("Error: command is required after --", err=True)
+        sys.exit(1)
+
+    cmd_str = " ".join(cmd)
+    log_path = get_log_dir() / f"{task_id}.log"
+    task = create_task(TaskCreate(
+        task_id=task_id,
+        name=name,
+        project_dir=project_dir,
+        command=cmd_str,
+        goal=instruction,
+        tags=[agent_type],
+    ))
+    task.agent_type = agent_type
+    task.user_instruction = instruction
+    task.instruction_source = "agentctl run --instruction"
+    save_task(task)
+
+    log_file = open(log_path, "w")
+    try:
+        log_file.write(f"Instruction: {instruction}\n")
+        log_file.flush()
+        proc = subprocess.Popen(cmd, cwd=project_dir, stdout=log_file, stderr=subprocess.STDOUT, preexec_fn=os.setsid)
+    except FileNotFoundError:
+        click.echo(f"Error: command not found: {cmd[0]}", err=True)
+        log_file.close()
+        delete_task(task_id)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error: failed to start process: {e}", err=True)
+        log_file.close()
+        delete_task(task_id)
+        sys.exit(1)
+
+    task.pid = proc.pid
+    task.status = TaskStatus.running
+    task.started_at = datetime.now()
+    save_task(task)
+    click.echo(f"Started {agent_type} task '{task_id}' (PID {proc.pid})")
+    click.echo(f"  Dir:         {project_dir}")
+    click.echo(f"  Instruction: {instruction}")
+    click.echo(f"  Log:         {log_path}")
+
+
 @cli.command()
 @click.argument("name")
 @click.option("--dir", "project_dir", required=True, help="Working directory for the agent")
@@ -355,12 +418,12 @@ def discover():
         click.echo("No agent processes discovered.")
         return
 
-    click.echo(f"{'SESSION':<24} {'TYPE':<10} {'PIDS':<8} {'CWD':<40}")
-    click.echo("-" * 82)
+    click.echo(f"{'SESSION':<24} {'TYPE':<10} {'STATUS':<14} {'PROJECT':<28} {'ACTIVITY':<40}")
+    click.echo("-" * 120)
     for s in sessions:
-        pid_str = str(len(s.all_pids))
-        cwd_display = s.cwd[:38] + ".." if len(s.cwd) > 40 else s.cwd
-        click.echo(f"{s.session_id:<24} {s.agent_type:<10} {pid_str:<8} {cwd_display:<40}")
+        project = (s.project_name or s.short_cwd or s.cwd)[:26]
+        activity = s.current_activity[:38] + ".." if len(s.current_activity) > 40 else s.current_activity
+        click.echo(f"{s.session_id:<24} {s.agent_type:<10} {s.status.value:<14} {project:<28} {activity:<40}")
 
 
 @cli.command(name="list")
@@ -373,7 +436,12 @@ def list_cmd(show_all: bool):
         return
 
     if not show_all:
-        tasks = [t for t in tasks if t.status in (TaskStatus.running, TaskStatus.idle, TaskStatus.waiting_input)]
+        active_statuses = {
+            TaskStatus.running, TaskStatus.busy, TaskStatus.testing, TaskStatus.editing,
+            TaskStatus.searching, TaskStatus.git_ops, TaskStatus.running_script,
+            TaskStatus.waiting, TaskStatus.waiting_input, TaskStatus.idle,
+        }
+        tasks = [t for t in tasks if t.status in active_statuses]
 
     if not tasks:
         click.echo("No active tasks. Use --all to see completed tasks.")
@@ -404,6 +472,13 @@ def list_cmd(show_all: bool):
         cmd_display = t.command[:38] + ".." if len(t.command) > 40 else t.command
         status_icon = {
             "running": "●",
+            "busy": "●",
+            "testing": "●",
+            "editing": "●",
+            "searching": "●",
+            "git_ops": "●",
+            "running_script": "●",
+            "waiting": "◑",
             "idle": "◐",
             "waiting_input": "◑",
             "completed": "✓",
@@ -562,7 +637,7 @@ def tail(task_id: str, lines: int, follow: bool):
 
 @cli.command()
 @click.option("--host", default=None, help="Bind host (default: 127.0.0.1)")
-@click.option("--port", default=None, type=int, help="Bind port (default: 9797)")
+@click.option("--port", default=None, type=int, help="Bind port (default: 8790)")
 def serve(host: str | None, port: int | None):
     """Start the web dashboard server."""
     from backend.main import run_server
@@ -592,7 +667,7 @@ def show_config():
 
 @cli.command(name="install-service")
 @click.option("--host", default="127.0.0.1", help="Bind host")
-@click.option("--port", default=9797, type=int, help="Bind port")
+@click.option("--port", default=8787, type=int, help="Bind port")
 @click.option("--enable", is_flag=True, help="Enable service to start on login")
 def install_service_cmd(host: str, port: int, enable: bool):
     """Install systemd user service for auto-start.

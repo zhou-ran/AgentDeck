@@ -20,7 +20,7 @@ from backend.models import (
     PlanStep,
     StepStatus,
 )
-from backend.process_scanner import get_process_cpu_mem, get_process_tree, is_process_alive
+from backend.process_scanner import derive_project_name, get_process_cpu_mem, get_process_tree, is_process_alive
 from backend.security import (
     atomic_write,
     is_valid_task_id,
@@ -95,6 +95,13 @@ def create_task(req: TaskCreate) -> Task:
 
 def enrich_task(task: Task) -> Task:
     """Update task status from live process and log state."""
+    project = derive_project_name(task.project_dir)
+    task.project_name = project.display_name
+    task.short_cwd = project.short_cwd
+    if task.goal and not task.user_instruction:
+        task.user_instruction = task.goal
+        task.instruction_source = "managed task goal"
+
     if task.pid is None:
         return task
 
@@ -105,6 +112,18 @@ def enrich_task(task: Task) -> Task:
     # Update status via state machine
     task.status = infer_status(task, alive, cpu, log_p)
     task.has_error_hint = check_error_hint(log_p)
+    task.status_reason = (
+        "process is not alive" if not alive else
+        "error hint detected in log" if task.has_error_hint else
+        "low CPU and stale log" if task.status == TaskStatus.idle else
+        "managed task process is alive"
+    )
+    task.current_activity = (
+        "Task failed; error hint detected" if task.status == TaskStatus.failed else
+        "No recent activity; possibly waiting or idle" if task.status == TaskStatus.idle else
+        "Managed task is running" if alive else
+        "Managed task completed"
+    )
 
     # Record ended_at and exit_code if process died
     if not alive and task.ended_at is None:
