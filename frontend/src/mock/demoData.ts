@@ -120,6 +120,10 @@ function session(partial: Partial<DiscoveredSession> & Pick<DiscoveredSession, '
     tags: partial.tags || [],
     timeline: partial.timeline || [],
     recent_logs: partial.recent_logs || [],
+    source: partial.source || 'process',
+    source_id: partial.source_id || `process:${rootPid}`,
+    runtime_type: partial.runtime_type || (partial.agent_type && partial.agent_type !== 'unknown' ? 'agent' : 'unknown'),
+    detected_app: partial.detected_app || partial.agent_type || 'unknown',
   }
 }
 

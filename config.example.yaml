@@ -11,3 +11,22 @@ port: 9797
 # Directories
 log_dir: "~/agent_logs"
 tasks_dir: "~/.agentdeck/tasks"
+
+# Notifications (webhook)
+notifications:
+  enabled: false
+  throttle_seconds: 300
+  dashboard_url: "http://127.0.0.1:9797"
+  events:
+    - needs_input
+    - error_hint
+    - failed
+    - completed
+    - stale
+  feishu:
+    enabled: false
+    webhook_url: "${AGENTDECK_FEISHU_WEBHOOK}"
+    secret: "${AGENTDECK_FEISHU_SECRET}"
+  wecom:
+    enabled: false
+    webhook_url: "${AGENTDECK_WECOM_WEBHOOK}"

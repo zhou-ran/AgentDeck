@@ -152,6 +152,17 @@ class TestDiscoverAgentProcesses:
         )
 
         monkeypatch.setattr("backend.process_scanner.discover_agent_processes", lambda: [codex, kimi])
+        monkeypatch.setattr("backend.session_sources.TmuxSessionSource.discover", lambda self: [])
+        monkeypatch.setattr("backend.session_sources.ScreenSessionSource.discover", lambda self: [])
+
+        def mock_get_process_tree(pid):
+            if pid == 10:
+                return codex
+            if pid == 20:
+                return kimi
+            return None
+
+        monkeypatch.setattr("backend.process_scanner.get_process_tree", mock_get_process_tree)
 
         sessions = discover_sessions()
 

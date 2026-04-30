@@ -45,10 +45,17 @@ function dot(color: string) {
 }
 
 function agentBadge(session: DiscoveredSession): string {
-  const type = (session.agent_type || 'unknown').toUpperCase()
-  if (type === 'UNKNOWN') return '[UNKNOWN]'
-  if ((session.agent_confidence ?? 0) < 0.8) return `[MAYBE ${type} ${(session.agent_confidence ?? 0).toFixed(2)}]`
-  return `[${type}]`
+  const app = (session.detected_app || session.agent_type || 'unknown').toUpperCase()
+  if (app === 'UNKNOWN') return '[UNKNOWN]'
+  if ((session.agent_confidence ?? 0) < 0.8 && session.source === 'process') {
+    return `[MAYBE ${app} ${(session.agent_confidence ?? 0).toFixed(2)}]`
+  }
+  return `[${app}]`
+}
+
+function sourceBadge(session: DiscoveredSession): string {
+  const src = session.source || 'process'
+  return src.toUpperCase()
 }
 
 function redact(line: string): string {
@@ -136,6 +143,7 @@ export function DiscoveredCard({
             {dot(session.status_dot)}
             <span className="truncate text-sm font-semibold text-gray-100">{projectName}</span>
             <span className="text-cyan-300">{agentBadge(session)}</span>
+            <span className="text-gray-600">[{sourceBadge(session)}]</span>
             <span className="text-gray-500">[{STATUS_LABELS[session.status] || session.status}]</span>
             <span className="text-gray-600">{root.elapsed}</span>
             {session.is_pinned && <span className="text-yellow-300">PIN</span>}
@@ -202,7 +210,7 @@ export function DiscoveredCard({
           )}
 
           <div>
-            <div className="mb-1 text-gray-500">Foreground Agent</div>
+            <div className="mb-1 text-gray-500">Foreground Process</div>
             <div className="grid gap-1 border border-gray-800 p-2 text-gray-400 md:grid-cols-5">
               <span>PID {session.foreground?.pid ?? '-'}</span>
               <span>TTY {session.foreground?.tty || '-'}</span>

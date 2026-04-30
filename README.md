@@ -28,7 +28,7 @@ pipx install .
 
 ```bash
 agentdeck serve
-# -> http://127.0.0.1:8787
+# -> http://127.0.0.1:9797
 ```
 
 ### Start a Monitored Task
@@ -74,14 +74,16 @@ By default, the dashboard binds to `127.0.0.1` (localhost only).
 
 For LAN access:
 ```bash
-agentdeck serve --host 0.0.0.0 --port 8787
+agentdeck serve --host 0.0.0.0 --port 9797
 # Token is printed to stdout
-# Use: curl -H "Authorization: Bearer <token>" http://<ip>:8787/api/tasks
+# Use: curl -H "Authorization: Bearer <token>" http://<ip>:9797/api/tasks
 ```
 
 Set a custom token:
 ```bash
-export AGENT_FOREMAN_TOKEN="my-secret"
+export AGENTDECK_TOKEN="my-secret"
+# Legacy name also supported:
+# export AGENT_FOREMAN_TOKEN="my-secret"
 agentdeck serve --host 0.0.0.0
 ```
 
@@ -89,7 +91,9 @@ agentdeck serve --host 0.0.0.0
 
 1. **Environment variable** (recommended):
    ```bash
-   export AGENT_FOREMAN_TOKEN="your-secret"
+   export AGENTDECK_TOKEN="your-secret"
+   # Legacy fallback:
+   # export AGENT_FOREMAN_TOKEN="your-secret"
    ```
 
 2. **Config file** (`~/.agentdeck/config.yaml`):

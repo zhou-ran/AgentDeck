@@ -32,8 +32,12 @@ from backend.models import (
     ProjectRuntimeStatus,
     ResourceMetrics,
     ResourceUsage,
+    RuntimeTypeResult,
     SystemMetrics,
 )
+from backend.notifications import get_dispatcher
+from backend.session_sources import discover_all_sessions
+from backend.session_sources.base import RawSession
 from backend.rules import matching_rules
 
 # ---- Root agent patterns for detecting top-level agents ----
@@ -984,54 +988,135 @@ def _check_child_processes(info: ProcessInfo) -> tuple[str, str] | None:
     return None
 
 
+_RUNTIME_PATTERNS = [
+    ("agent", "claude-code", re.compile(r"claude[-_ ]?code\b", re.I)),
+    ("agent", "kimi-code", re.compile(r"kimi[-_ ]?code\b", re.I)),
+    ("agent", "codex", re.compile(r"codex\b", re.I)),
+    ("agent", "claude", re.compile(r"claude\b", re.I)),
+    ("agent", "kimi", re.compile(r"kimi\b", re.I)),
+    ("agent", "aider", re.compile(r"aider\b", re.I)),
+    ("agent", "gemini", re.compile(r"gemini\b", re.I)),
+    ("test", "pytest", re.compile(r"pytest\b", re.I)),
+    ("test", "vitest", re.compile(r"vitest\b", re.I)),
+    ("test", "jest", re.compile(r"jest\b", re.I)),
+    ("dev_server", "vite", re.compile(r"\bvite\b", re.I)),
+    ("dev_server", "uvicorn", re.compile(r"\buvicorn\b", re.I)),
+    ("dev_server", "streamlit", re.compile(r"\bstreamlit\b", re.I)),
+    ("dev_server", "rstudio-server", re.compile(r"\brstudio-server\b", re.I)),
+    ("dev_server", "next", re.compile(r"\bnext\s+dev\b", re.I)),
+    ("script", "python", re.compile(r"\bpython[23]?\b", re.I)),
+    ("script", "rscript", re.compile(r"\brscript\b", re.I)),
+    ("script", "node", re.compile(r"\bnode\b", re.I)),
+    ("script", "npm", re.compile(r"\bnpm\b", re.I)),
+    ("script", "pnpm", re.compile(r"\bpnpm\b", re.I)),
+    ("script", "bun", re.compile(r"\bbun\b", re.I)),
+    ("script", "bash", re.compile(r"\bbash\b", re.I)),
+    ("script", "sh", re.compile(r"\bsh\b", re.I)),
+    ("git_ops", "git", re.compile(r"\bgit\b", re.I)),
+]
+
+
+def detect_runtime_type(command: str) -> RuntimeTypeResult:
+    """Detect runtime type and detected app from a command string."""
+    if not command:
+        return RuntimeTypeResult(runtime_type="unknown", reason="empty command")
+    text_lower = command.lower()
+    for runtime_type, app, pattern in _RUNTIME_PATTERNS:
+        if pattern.search(text_lower):
+            return RuntimeTypeResult(
+                runtime_type=runtime_type,
+                detected_app=app,
+                confidence=0.85,
+                reason=f"matched pattern for {app}",
+            )
+    return RuntimeTypeResult(runtime_type="unknown", detected_app="", confidence=0.0, reason="no match")
+
+
+def _raw_session_to_discovered(raw: RawSession) -> DiscoveredSession:
+    """Convert a RawSession into a DiscoveredSession with basic fields."""
+    cwd = raw.cwd or "unknown"
+
+    # Build ProcessInfo for the root PID if available
+    root_process: ProcessInfo | None = None
+    if raw.root_pid:
+        root_process = get_process_tree(raw.root_pid)
+
+    if root_process is None:
+        # Fallback minimal ProcessInfo for sessions where psutil cannot read the tree
+        root_process = ProcessInfo(
+            pid=raw.root_pid or 0,
+            ppid=0,
+            name=raw.command or "unknown",
+            cmdline=raw.command.split() if raw.command else [],
+            cwd=raw.cwd or "",
+        )
+
+    def _collect_pids(pi: ProcessInfo) -> list[int]:
+        pids = [pi.pid]
+        for c in pi.children:
+            pids.extend(_collect_pids(c))
+        return pids
+
+    all_pids_set = set(_collect_pids(root_process))
+
+    # Generate stable session_id
+    if cwd == "unknown":
+        session_id = f"{raw.source}-{raw.root_pid or 'unknown'}"
+    else:
+        seed = f"{cwd}|{raw.source_id}|{raw.root_pid or 0}"
+        h = hashlib.md5(seed.encode()).hexdigest()[:8]
+        session_id = f"{raw.source}-{h}"
+
+    # Backward-compatible agent detection
+    agent_result = detect_agent_type(root_process, [], raw.cwd or "")
+    runtime_result = detect_runtime_type(raw.command or "")
+
+    return DiscoveredSession(
+        session_id=session_id,
+        cwd=cwd,
+        root_process=root_process,
+        all_pids=sorted(all_pids_set),
+        agent_type=agent_result.agent_type,
+        agent_confidence=agent_result.confidence,
+        agent_detection_reason=agent_result.reason,
+        agent_detection_evidence=agent_result.evidence,
+        source=raw.source,
+        source_id=raw.source_id,
+        runtime_type=runtime_result.runtime_type,
+        detected_app=runtime_result.detected_app,
+        recent_output=raw.recent_output or "",
+    )
+
+
 def discover_sessions() -> list[DiscoveredSession]:
-    """Discover agent processes as independent sessions.
+    """Discover terminal sessions from all sources.
 
-    Each top-level agent process is one session. Multiple agents may work in the
-    same project/worktree simultaneously, so grouping by cwd hides real sessions.
+    Priority: tmux pane > screen window > raw process.  Processes whose PID
+    already belongs to a tmux pane are dropped so we don't show duplicates.
     """
-    procs = discover_agent_processes()
-    if not procs:
+    raw_sessions = discover_all_sessions()
+    if not raw_sessions:
         return []
 
-    # Drop processes whose cwd is `/` or inside /Applications — these are
-    # Mac desktop apps (Gemini.app, Codex.app, …) that happen to be named
-    # like agents but are not actual coding sessions in any project.
-    procs = [
-        p for p in procs
-        if not _is_desktop_app_cwd(p.cwd)
-    ]
-    if not procs:
-        return []
+    # Collect PIDs already covered by tmux/screen
+    covered_pids: set[int] = set()
+    for raw in raw_sessions:
+        if raw.source in ("tmux", "screen") and raw.root_pid:
+            covered_pids.add(raw.root_pid)
 
     sessions: list[DiscoveredSession] = []
-    for root in sorted(procs, key=lambda p: (p.cwd or "unknown", p.pid)):
-        cwd = root.cwd or "unknown"
+    for raw in raw_sessions:
+        # Skip raw-process sessions whose PID is already inside a tmux/screen pane
+        if raw.source == "process" and raw.root_pid in covered_pids:
+            continue
 
-        def _collect_pids(pi: ProcessInfo) -> list[int]:
-            pids = [pi.pid]
-            for c in pi.children:
-                pids.extend(_collect_pids(c))
-            return pids
+        session = _raw_session_to_discovered(raw)
 
-        all_pids_set = set(_collect_pids(root))
+        # Drop desktop-app masquerading sessions (Mac .app bundles with cwd /)
+        if _is_desktop_app_cwd(session.cwd):
+            continue
 
-        # Generate session_id from cwd
-        if cwd == "unknown":
-            session_id = f"unknown-{root.pid}"
-        else:
-            agent = _detect_agent_type(root)
-            seed = f"{cwd}|{agent}|{root.pid}|{int(root.create_time or 0)}"
-            h = hashlib.md5(seed.encode()).hexdigest()[:8]
-            session_id = f"discovered-{h}"
-
-        sessions.append(DiscoveredSession(
-            session_id=session_id,
-            cwd=cwd,
-            root_process=root,
-            all_pids=sorted(all_pids_set),
-            agent_type=_detect_agent_type(root),
-        ))
+        sessions.append(session)
 
     # Sort by cwd for stable ordering
     sessions.sort(key=lambda s: s.cwd)
@@ -1094,7 +1179,11 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
                 if parsed_session_id:
                     session.task_id = str(parsed_session_id)
                 session.heartbeat_ts = session_data.get("heartbeat_ts")
-                session.recent_output = redact_sensitive_text(session_data.get("recent_output", ""))
+                # For tmux/screen sessions, preserve capture-pane output unless session file provides content
+                if session.source in ("tmux", "screen") and session.recent_output:
+                    pass
+                else:
+                    session.recent_output = redact_sensitive_text(session_data.get("recent_output", ""))
                 session.pending_items = session_data.get("pending_items", [])
                 session.last_user_message = redact_sensitive_text(session_data.get("last_user_message", ""))
                 session.conversation = [
@@ -1230,6 +1319,13 @@ def scan_agent_sessions(include_ignored: bool = False) -> list[DiscoveredSession
                     session.recent_logs = [redact_sensitive_text(line) for line in lines[-10:]]
                 except Exception:
                     pass
+
+        # 13. Notification trigger
+        try:
+            dispatcher = get_dispatcher()
+            dispatcher.notify_if_needed(session)
+        except Exception:
+            pass
 
         enriched.append(session)
 
