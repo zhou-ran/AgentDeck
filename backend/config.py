@@ -97,4 +97,4 @@ def get_host() -> str:
 
 def get_port() -> int:
     cfg = load_config()
-    return cfg.get("port", 8787)
+    return cfg.get("port", 9797)

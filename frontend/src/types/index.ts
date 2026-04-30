@@ -288,6 +288,12 @@ export interface DiscoveredSession {
   // Timeline
   timeline: ActivityTimelineItem[]
 
+  // Session source fields
+  source: string
+  source_id: string
+  runtime_type: string
+  detected_app: string
+
   // Logs
   recent_logs: string[]
 }

@@ -80,6 +80,14 @@ class AgentDetectionResult(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
+class RuntimeTypeResult(BaseModel):
+    """Structured result for runtime type detection."""
+    runtime_type: str = "unknown"
+    detected_app: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+
+
 class ForegroundAgentInfo(BaseModel):
     pid: Optional[int] = None
     cmd: str = ""
@@ -290,6 +298,12 @@ class DiscoveredSession(BaseModel):
     is_interactive: bool = False
     started_at: Optional[datetime] = None
     elapsed_sec: Optional[int] = None
+
+    # Session source fields
+    source: str = "process"
+    source_id: str = ""
+    runtime_type: str = ""
+    detected_app: str = ""
 
     # Enriched fields
     project_name: ProjectNameInfo = Field(default_factory=ProjectNameInfo)

@@ -141,12 +141,13 @@ def atomic_write(path: Path, content: str) -> None:
 
 def get_token() -> str:
     """Get authentication token. Priority:
-    1. AGENT_FOREMAN_TOKEN env var
-    2. config.yaml
-    3. Auto-generate and save
+    1. AGENTDECK_TOKEN env var
+    2. AGENT_FOREMAN_TOKEN env var (legacy)
+    3. config.yaml
+    4. Auto-generate and save
     """
-    # Env var takes priority
-    env_token = os.environ.get("AGENT_FOREMAN_TOKEN")
+    # Env vars take priority
+    env_token = os.environ.get("AGENTDECK_TOKEN") or os.environ.get("AGENT_FOREMAN_TOKEN")
     if env_token:
         return env_token
 
