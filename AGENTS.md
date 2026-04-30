@@ -4,7 +4,7 @@
 
 ## What is AgentDeck?
 
-A **single-machine** web dashboard + CLI for monitoring coding agents (codex, claude, kimi, aider, gemini, pytest, npm, git, etc.). It auto-discovers running agent processes and displays them in a live React UI via SSE.
+A **single-machine** web dashboard + CLI for monitoring terminal sessions and long-running jobs (codex, claude, kimi, aider, gemini, pytest, npm, git, tmux panes, etc.). It auto-discovers running sessions from tmux panes, screen windows, and standalone processes, then displays them in a live React UI via SSE.
 
 ## Architecture
 
@@ -13,13 +13,26 @@ CLI (click) ──► task_manager ──► JSON files (~/.agentdeck/tasks/)
      │
 FastAPI app ─────┤
     ├── /api/tasks           (CRUD + plan/step/handoff/logs/process tree)
-    ├── /api/discover        (auto-scan live agent sessions)
+    ├── /api/discover        (auto-scan live sessions from tmux/screen/process)
     ├── /api/events          (SSE stream, 2s interval)
     ├── /api/pins            (persistent pin rules)
     ├── /api/ignored         (persistent ignore rules)
     ├── /api/sessions/{id}/… (pin/unpin/ignore/unignore discovered sessions)
     ├── /api/system-metrics  (host resource overview)
     └── static/       (Vite build output → backend/static/)
+
+Session discovery pipeline:
+    session_sources/ ──► discover_all_sessions()
+        ├── tmux.py    (tmux list-panes + capture-pane)
+        ├── screen.py  (screen -ls, best-effort)
+        └── process.py (psutil agent process scanning)
+    
+    Enrichment: detect_runtime_type → infer activity → git status → build DiscoveredSession
+    
+    Notifications (optional):
+        notifications/ ──► dispatcher
+            ├── feishu.py  (Feishu/Lark custom bot webhook)
+            └── wecom.py   (WeCom group bot webhook)
 ```
 
 ## Tech Stack
@@ -39,8 +52,10 @@ FastAPI app ─────┤
 | `backend/main.py` | FastAPI app, lifespan, security middleware |
 | `backend/models.py` | Pydantic models for tasks, sessions, plans |
 | `backend/task_manager.py` | Task CRUD, JSON persistence, atomic writes |
-| `backend/process_scanner.py` | Auto-discovery of agent processes via psutil |
+| `backend/session_sources/` | Session discovery abstraction (tmux, screen, process) |
+| `backend/process_scanner.py` | Auto-discovery, enrichment, and activity inference |
 | `backend/session_parser.py` | Session/log parsing for live agent activity |
+| `backend/notifications/` | Webhook notifications (Feishu, WeCom) with throttle |
 | `backend/rules.py` | Persistent pin/ignore rule storage |
 | `backend/config.py` | Config dir, token generation, YAML I/O |
 | `backend/security.py` | Path validation, rate limiter, token helpers |
@@ -77,11 +92,13 @@ make build-frontend   # tsc && vite build → backend/static/
 
 ## Common Modification Points
 
-- **New agent type detection** → `backend/process_scanner.py`, `backend/session_parser.py`, and `AGENT_KEYWORDS` in `backend/config.py` if the scanner needs a new keyword.
+- **New session source** (tmux/screen/process) → `backend/session_sources/`.
+- **New agent type / runtime detection** → `backend/process_scanner.py:detect_runtime_type()`, `backend/session_parser.py`, and `AGENT_KEYWORDS` in `backend/config.py`.
 - **Pin/ignore behavior** → `backend/rules.py`, `backend/api/processes.py`, and dashboard/client types.
 - **New CLI command** → add to `backend/cli.py`, re-use `backend/task_manager.py` helpers.
 - **UI new page/card** → add route in `frontend/src/App.tsx`, component in `frontend/src/components/`.
 - **New config field** → add to `backend/config.py` + `config.example.yaml`.
+- **Notifications** → `backend/notifications/` (Feishu/WeCom webhooks). Webhook URLs must never be exposed in API responses or logs.
 - **Log redaction** → patterns live in `backend/log_manager.py:SECRET_PATTERNS`.
 - **Public project docs** → tracked root docs are `README.md`, `AGENTS.md`, `SECURITY.md`, and `PUSH_GUIDE.md`. `CLAUDE.md` and `docs/` are intentionally local/ignored.
 

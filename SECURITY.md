@@ -50,7 +50,7 @@ AgentDeck runs on a shared Linux server where multiple users may have login acce
 
 ### 2. Token Authentication (HIGH)
 - **Before**: No authentication
-- **After**: Bearer token required for non-localhost access. Token sourced from `AGENT_FOREMAN_TOKEN` env var, config file, or auto-generated.
+- **After**: Bearer token required for non-localhost access. Token sourced from `AGENTDECK_TOKEN` env var (legacy `AGENT_FOREMAN_TOKEN` also supported), config file, or auto-generated.
 
 ### 3. Arbitrary Shell Access (HIGH)
 - **Before**: No validation on project_dir or command
@@ -106,7 +106,9 @@ AgentDeck runs on a shared Linux server where multiple users may have login acce
 
 ```bash
 # Option 1: Environment variable (recommended for scripts)
-export AGENT_FOREMAN_TOKEN="your-secret-token"
+export AGENTDECK_TOKEN="your-secret-token"
+# Legacy name also supported:
+# export AGENT_FOREMAN_TOKEN="your-secret-token"
 
 # Option 2: Config file (~/.agentdeck/config.yaml)
 token: your-secret-token
@@ -122,13 +124,13 @@ token: your-secret-token
 agentdeck serve
 
 # LAN access (requires token)
-agentdeck serve --host 0.0.0.0 --port 8790
+agentdeck serve --host 0.0.0.0 --port 9797
 # Token will be printed to stdout
 ```
 
 ## Residual Risks
 
-1. **Token in config file**: Token stored in plaintext in `~/.agentdeck/config.yaml`. Mitigate by setting `AGENT_FOREMAN_TOKEN` env var instead.
+1. **Token in config file**: Token stored in plaintext in `~/.agentdeck/config.yaml`. Mitigate by setting `AGENTDECK_TOKEN` env var instead.
 
 2. **Localhost auth bypass**: Dashboard access from localhost has no auth. On shared servers, any local user can access the dashboard. Mitigate by binding to a Unix socket with filesystem permissions.
 
